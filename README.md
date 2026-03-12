@@ -8,9 +8,13 @@ Single plate → multiple doors
 
 K-of-N group plate puzzles
 
+Single plate trap conversion with separate trap config UI
+
 Secret doors and locked doors
 
 Trigger & release messages
+
+Trap types: alarm, damage, teleport, reveal
 
 Auto-lock puzzles
 
@@ -34,6 +38,8 @@ Locked doors (open/unlock when pressed)
 Secret doors (reveal/open when pressed)
 
 Optional trigger and release chat messages
+
+Optional trap conversion with a dedicated trap config menu
 
 Groups (K-of-N)
 
@@ -133,6 +139,16 @@ Command Reference
 !plate make NAME
 !plate add lock
 !plate add secret
+!plate trapui PLATEID
+!plate traptoggle PLATEID
+!plate traptype PLATEID alarm|damage|teleport|reveal|none
+!plate traptrigger PLATEID press|release|both
+!plate trapmsg PLATEID message...
+!plate trapdamage PLATEID XdY
+!plate trapsetteleport PLATEID
+!plate trapclearteleport PLATEID
+!plate trapsetreveal PLATEID
+!plate trapclearreveal PLATEID
 !plate checkplate PLATEID
 !plate simopen PLATEID
 !plate simclose PLATEID
@@ -194,6 +210,24 @@ Door hides
 Door closes
 
 Door locks
+
+Trap Modes
+
+ALARM
+
+Posts a trap narration message when triggered.
+
+DAMAGE
+
+Posts a damage roll message against the token(s) on the plate.
+
+TELEPORT
+
+Moves the token(s) on the plate to a saved destination marker.
+
+REVEAL
+
+Reveals selected GM-layer graphics or secret doors.
 
 State Persistence
 
