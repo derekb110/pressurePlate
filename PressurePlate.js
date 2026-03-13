@@ -166,7 +166,7 @@ var PressurePlateDoors = PressurePlateDoors || (function () {
         });
     }
 
-    function whisper(html) { sendChat(MOD, "/w gm " + html); }
+    function whisper(html) { sendChat("", "/w gm " + html); }
     function shortId(id) { return (id || "").slice(-6); }
 
     function safeGroupNameFromPage(pageName) {
@@ -180,7 +180,7 @@ var PressurePlateDoors = PressurePlateDoors || (function () {
         raw = String(raw || "").trim();
         if (!raw) return;
         // Public narration. If you want GM-only, switch to: "/w gm "
-        sendChat(MOD, "/desc " + raw);
+        sendChat("", "/desc " + raw);
     }
 
     /* ---------- ping ---------- */
@@ -1574,7 +1574,7 @@ var PressurePlateDoors = PressurePlateDoors || (function () {
     on("ready", function () {
         ensureState();
         evaluateAll();
-        sendChat(MOD, "/w gm Loaded ✅  UI: !plate ui   (State key: " + STATE + ")");
+        sendChat("", "/w gm Loaded ✅  UI: !plate ui   (State key: " + STATE + ")");
     });
 
     return {};
