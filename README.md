@@ -4,19 +4,21 @@ A full-featured pressure plate and door control system for Roll20.
 
 Supports:
 
-Single plate → multiple doors
+Single-source trigger → multiple doors
 
-K-of-N group plate puzzles
+K-of-N multi-source trigger puzzles
 
-Single plate trap conversion with separate trap config UI
+Single-source mechanisms with separate primary effect configuration UI
 
 Secret doors and locked doors
 
 Trigger & release messages
 
-Trap types: alarm, damage, teleport, reveal, save, status, spawn
+Trigger types: pressure plate, tripwire, proximity, manual
 
-Extra trap effect: lock triggered token(s) in place
+Primary effect types: alarm, damage, teleport, reveal, save, status, spawn
+
+Additional effect: lock triggered token(s) in place
 
 Auto-lock puzzles
 
@@ -29,9 +31,9 @@ Ping support
 Safe state persistence across script updates
 
 Features
-Single Plates
+Single-Source Triggers
 
-Bind one plate to multiple doors
+Bind one trigger to multiple doors
 
 Supports:
 
@@ -41,9 +43,9 @@ Secret doors (reveal/open when pressed)
 
 Optional trigger and release chat messages
 
-Optional trap conversion with a dedicated trap config menu
+Optional primary effect configuration with a dedicated effect menu
 
-Groups (K-of-N)
+Multi-Source Mechanisms
 
 Multiple plates controlling multiple doors
 
@@ -67,7 +69,7 @@ Override Mode – 60-second edit unlock
 
 UI
 
-Teleport-style plate list
+Teleport-style mechanism list and editor
 
 Per-page display
 
@@ -94,20 +96,26 @@ Open the UI with:
 !mech ui
 
 Basic Usage
-Create a Plate
+Create a Trigger
 
 Select one or more tokens and run:
 
-!mech make PlateName
+!mech make TriggerName
+
+You can also create a specific trigger type:
+
+!mech make TripwireA tripwire
+!mech make DangerZone proximity
+!mech make LeverA manual
 
 
-Plate tokens are automatically moved to the GM layer.
+Trigger tokens are automatically moved to the GM layer.
 
-Bind Doors to a Single Plate
+Bind Doors to a Single Trigger
 
 Select:
 
-The plate token (GM layer)
+The trigger token (GM layer)
 
 One or more Door Tool doors
 
@@ -120,55 +128,85 @@ or
 
 !mech add secret
 
-Convert a Plate into a Trap
+Configure Trigger Type and Primary Effect
 
 Open the main UI:
 
 !mech ui
 
-Then click the trap button on a plate, or open the trap UI directly:
+Then click the effect button on a single-source mechanism, or open the effect UI directly:
 
-!mech trapui PLATEID
+!mech effectui SOURCEID
 
-From the trap UI you can:
+From the effect UI you can:
 
-Choose a trap type
+Choose a trigger type
+
+Choose a primary effect type
 
 Choose whether it fires on press, release, or both
 
-Set a trap message
+Set an effect message
 
-Configure trap-specific settings like damage, save DC, markers, reveal targets, spawn targets, or teleport destination
+Configure effect-specific settings like damage, save DC, markers, reveal targets, spawn targets, or teleport destination
 
 Optionally enable the lock-token effect
 
-For non-reveal trap types, you can also enable reveal as an extra effect so a save, damage, or spawn trap can reveal hidden targets at the same time.
+For non-reveal primary effect types, you can also enable reveal as an extra effect so a save, damage, or spawn effect can reveal hidden targets at the same time.
 
-Trap Setup Notes
+Primary Effect Setup Notes
 
-Teleport traps:
+Trigger type setup:
+
+Pressure plate:
+
+Requires a token to be fully inside the source token bounds.
+
+Tripwire:
+
+Triggers when any token overlaps the source token bounds.
+
+Proximity:
+
+Triggers when a token comes within a configurable radius.
+
+Set the radius in cells with:
+
+!mech proximityrange SOURCEID 2
+
+Manual:
+
+A GM-controlled trigger state that does not depend on token movement.
+
+Use:
+
+!mech manualon SOURCEID
+!mech manualoff SOURCEID
+!mech manualtoggle SOURCEID
+
+Teleport effects:
 
 Select one destination marker token/graphic, then use:
 
-!mech trapsetteleport PLATEID
+!mech effectsetteleport SOURCEID
 
-Reveal traps:
+Reveal effects:
 
 Select one or more hidden graphics or secret doors, then use:
 
-!mech trapsetreveal PLATEID
+!mech effectsetreveal SOURCEID
 
-Spawn traps:
+Spawn effects:
 
 Select one or more GM-layer graphics to reveal on trigger, then use:
 
-!mech trapsetspawn PLATEID
+!mech effectsetspawn SOURCEID
 
-Status traps:
+Status effects:
 
 Use comma-separated Roll20 status marker names, for example:
 
-!mech trapstatusmarkers PLATEID cobweb,poisoned
+!mech effectstatusmarkers SOURCEID cobweb,poisoned
 
 Lock token effect:
 
@@ -176,7 +214,7 @@ When enabled, triggered token(s) are snapped back to their locked position until
 
 Use:
 
-!mech trapunlock PLATEID
+!mech effectunlock SOURCEID
 
 Create a Group Puzzle
 
@@ -196,42 +234,47 @@ Command Reference
 !mech setpage
 !mech check
 
-!mech make NAME
+!mech make NAME [pressurePlate|tripwire|proximity|manual]
 !mech add lock
 !mech add secret
-!mech trapui PLATEID
-!mech traptoggle PLATEID
-!mech traptype PLATEID alarm|damage|teleport|reveal|save|status|spawn|none
-!mech traptrigger PLATEID press|release|both
-!mech trapmsg PLATEID message...
-!mech trapdamage PLATEID XdY
-!mech trapsavelabel PLATEID LABEL
-!mech trapsavedc PLATEID DC
-!mech trapsavesuccessmsg PLATEID message...
-!mech trapsavefailmsg PLATEID message...
-!mech trapsavesuccess PLATEID half|none
-!mech trapsavedmgtype PLATEID TYPE
-!mech trapsavefaildmg PLATEID XdY
-!mech trapstatusmarkers PLATEID marker1,marker2
-!mech trapstatusclear PLATEID
-!mech trapsetteleport PLATEID
-!mech trapclearteleport PLATEID
-!mech trapsetreveal PLATEID
-!mech trapclearreveal PLATEID
-!mech traprevealtoggle PLATEID
-!mech trapsetspawn PLATEID
-!mech trapclearspawn PLATEID
-!mech traplocktoggle PLATEID
-!mech traplockmarker PLATEID MARKER
-!mech trapunlock PLATEID
-!mech checkplate PLATEID
-!mech simopen PLATEID
-!mech simclose PLATEID
-!mech removeplate PLATEID
-!mech ping PLATEID
+!mech sourcetype SOURCEID pressurePlate|tripwire|proximity|manual
+!mech proximityrange SOURCEID CELLS
+!mech manualon SOURCEID
+!mech manualoff SOURCEID
+!mech manualtoggle SOURCEID
+!mech effectui SOURCEID
+!mech effecttoggle SOURCEID
+!mech effecttype SOURCEID alarm|damage|teleport|reveal|save|status|spawn|none
+!mech effecttrigger SOURCEID press|release|both
+!mech effectmsg SOURCEID message...
+!mech effectdamage SOURCEID XdY
+!mech effectsavelabel SOURCEID LABEL
+!mech effectsavedc SOURCEID DC
+!mech effectsavesuccessmsg SOURCEID message...
+!mech effectsavefailmsg SOURCEID message...
+!mech effectsavesuccess SOURCEID half|none
+!mech effectsavedmgtype SOURCEID TYPE
+!mech effectsavefaildmg SOURCEID XdY
+!mech effectstatusmarkers SOURCEID marker1,marker2
+!mech effectstatusclear SOURCEID
+!mech effectsetteleport SOURCEID
+!mech effectclearteleport SOURCEID
+!mech effectsetreveal SOURCEID
+!mech effectclearreveal SOURCEID
+!mech effectrevealtoggle SOURCEID
+!mech effectsetspawn SOURCEID
+!mech effectclearspawn SOURCEID
+!mech effectlocktoggle SOURCEID
+!mech effectlockmarker SOURCEID MARKER
+!mech effectunlock SOURCEID
+!mech checkplate SOURCEID
+!mech simopen SOURCEID
+!mech simclose SOURCEID
+!mech removeplate SOURCEID
+!mech ping SOURCEID
 
-!mech platemsgon PLATEID message...
-!mech platemsgoff PLATEID message...
+!mech platemsgon SOURCEID message...
+!mech platemsgoff SOURCEID message...
 
 !mech groupmake NAME [K]
 !mech groupaddplates NAME
@@ -247,7 +290,7 @@ Command Reference
 !mech groupreset NAME
 
 !mech groupremove NAME
-!mech groupdelplate NAME PLATEID
+!mech groupdelplate NAME SOURCEID
 !mech groupdeldor NAME DOORID
 
 
@@ -286,11 +329,11 @@ Door closes
 
 Door locks
 
-Trap Modes
+Primary Effect Modes
 
 ALARM
 
-Posts a trap narration message when triggered.
+Posts an effect narration message when triggered.
 
 DAMAGE
 
@@ -304,7 +347,7 @@ REVEAL
 
 Reveals selected GM-layer graphics or secret doors.
 
-Reveal can also be used as an extra effect on non-reveal trap types.
+Reveal can also be used as an extra effect on non-reveal primary effect types.
 
 SAVE
 
@@ -320,48 +363,48 @@ Moves selected GM-layer spawn tokens to the objects layer when triggered.
 
 LOCK TOKEN EFFECT
 
-Optional extra trap effect that holds triggered token(s) in place until manually unlocked.
+Optional extra effect that holds triggered token(s) in place until manually unlocked.
 
 Examples
 
-Dart trap with save-for-half
+Dart effect with save-for-half
 
-!mech traptype PLATEID save
-!mech trapsavelabel PLATEID DEX
-!mech trapsavedc PLATEID 14
-!mech trapsavesuccess PLATEID half
-!mech trapsavedmgtype PLATEID piercing
-!mech trapsavefaildmg PLATEID 2d4
-!mech trapmsg PLATEID A volley of darts fires from the wall.
+!mech effecttype SOURCEID save
+!mech effectsavelabel SOURCEID DEX
+!mech effectsavedc SOURCEID 14
+!mech effectsavesuccess SOURCEID half
+!mech effectsavedmgtype SOURCEID piercing
+!mech effectsavefaildmg SOURCEID 2d4
+!mech effectmsg SOURCEID A volley of darts fires from the wall.
 
-Reveal-and-save trap
+Reveal-and-save effect
 
-!mech traptype PLATEID save
-!mech traprevealtoggle PLATEID
-!mech trapsavelabel PLATEID DEX
-!mech trapsavedc PLATEID 15
-!mech trapsavesuccess PLATEID none
-!mech trapsavedmgtype PLATEID fire
-!mech trapsavefaildmg PLATEID 3d6
-!mech trapmsg PLATEID Flame jets burst from hidden wall vents.
+!mech effecttype SOURCEID save
+!mech effectrevealtoggle SOURCEID
+!mech effectsavelabel SOURCEID DEX
+!mech effectsavedc SOURCEID 15
+!mech effectsavesuccess SOURCEID none
+!mech effectsavedmgtype SOURCEID fire
+!mech effectsavefaildmg SOURCEID 3d6
+!mech effectmsg SOURCEID Flame jets burst from hidden wall vents.
 
-Web snare trap
+Web snare effect
 
-!mech traptype PLATEID status
-!mech trapstatusmarkers PLATEID cobweb
-!mech traplocktoggle PLATEID
-!mech trapmsg PLATEID Sticky webbing erupts from the floor.
+!mech effecttype SOURCEID status
+!mech effectstatusmarkers SOURCEID cobweb
+!mech effectlocktoggle SOURCEID
+!mech effectmsg SOURCEID Sticky webbing erupts from the floor.
 
-Ambush spawn trap
+Ambush spawn effect
 
-!mech traptype PLATEID spawn
-!mech trapmsg PLATEID Hidden attackers rush into the room.
+!mech effecttype SOURCEID spawn
+!mech effectmsg SOURCEID Hidden attackers rush into the room.
 
 Backward Compatibility
 
 Existing pressure plates continue to work without conversion.
 
-Trap configuration is additive and uses backfilled defaults, so older saved plate data should remain valid after script updates.
+Primary effect configuration is additive and uses backfilled defaults, so older saved mechanism data should remain valid after script updates.
 
 State Persistence
 

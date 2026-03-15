@@ -38,11 +38,27 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
 
     var DEBOUNCE_MS = 120;
     var OVERRIDE_MS = 60000; // 60s config override
-    var TRAP_TYPES = { none: true, alarm: true, damage: true, teleport: true, reveal: true, save: true, status: true, spawn: true };
-    var TRAP_TRIGGERS = { press: true, release: true, both: true };
+    var PRIMARY_EFFECT_TYPES = { none: true, alarm: true, damage: true, teleport: true, reveal: true, save: true, status: true, spawn: true };
+    var PRIMARY_EFFECT_TRIGGERS = { press: true, release: true, both: true };
+    var SOURCE_KINDS = { pressurePlate: true, tripwire: true, proximity: true, manual: true };
     var MOVE_LOCK_REENTRY = {};
 
-    function defaultTrapConfig() {
+    function defaultTriggerConfig(kind) {
+        kind = String(kind || "pressurePlate");
+        return {
+            proximityRange: kind === "proximity" ? 1 : 1
+        };
+    }
+
+    function backfillTriggerConfig(kind, cfg) {
+        cfg = cfg || {};
+        if (typeof cfg.proximityRange === "undefined") cfg.proximityRange = 1;
+        cfg.proximityRange = parseFloat(cfg.proximityRange, 10);
+        if (isNaN(cfg.proximityRange) || cfg.proximityRange < 0) cfg.proximityRange = 1;
+        return cfg;
+    }
+
+    function defaultPrimaryEffectConfig() {
         return {
             enabled: false,
             type: "none",
@@ -78,44 +94,50 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         };
     }
 
-    function backfillTrapConfig(trap) {
-        trap = trap || {};
+    function backfillPrimaryEffectConfig(effect) {
+        effect = effect || {};
 
-        if (typeof trap.enabled === "undefined") trap.enabled = false;
-        if (!TRAP_TYPES[trap.type]) trap.type = "none";
-        if (!TRAP_TRIGGERS[trap.trigger]) trap.trigger = "press";
-        if (typeof trap.message === "undefined") trap.message = "";
-        if (typeof trap.damage === "undefined") trap.damage = "1d6";
+        if (typeof effect.enabled === "undefined") effect.enabled = false;
+        if (!PRIMARY_EFFECT_TYPES[effect.type]) effect.type = "none";
+        if (!PRIMARY_EFFECT_TRIGGERS[effect.trigger]) effect.trigger = "press";
+        if (typeof effect.message === "undefined") effect.message = "";
+        if (typeof effect.damage === "undefined") effect.damage = "1d6";
 
-        trap.save = trap.save || {};
-        if (typeof trap.save.label === "undefined") trap.save.label = "DEX";
-        if (typeof trap.save.dc === "undefined") trap.save.dc = 12;
-        if (typeof trap.save.successMsg === "undefined") trap.save.successMsg = "";
-        if (typeof trap.save.failMsg === "undefined") trap.save.failMsg = "";
-        if (trap.save.successMode !== "half" && trap.save.successMode !== "none") trap.save.successMode = "none";
-        if (typeof trap.save.damageType === "undefined") trap.save.damageType = "";
-        if (typeof trap.save.failDamage === "undefined") trap.save.failDamage = "";
+        effect.save = effect.save || {};
+        if (typeof effect.save.label === "undefined") effect.save.label = "DEX";
+        if (typeof effect.save.dc === "undefined") effect.save.dc = 12;
+        if (typeof effect.save.successMsg === "undefined") effect.save.successMsg = "";
+        if (typeof effect.save.failMsg === "undefined") effect.save.failMsg = "";
+        if (effect.save.successMode !== "half" && effect.save.successMode !== "none") effect.save.successMode = "none";
+        if (typeof effect.save.damageType === "undefined") effect.save.damageType = "";
+        if (typeof effect.save.failDamage === "undefined") effect.save.failDamage = "";
 
-        trap.status = trap.status || {};
-        if (typeof trap.status.markers === "undefined") trap.status.markers = "cobweb";
-        if (typeof trap.status.clearOnRelease === "undefined") trap.status.clearOnRelease = false;
-        if (!trap.status.lastTargets) trap.status.lastTargets = [];
+        effect.status = effect.status || {};
+        if (typeof effect.status.markers === "undefined") effect.status.markers = "cobweb";
+        if (typeof effect.status.clearOnRelease === "undefined") effect.status.clearOnRelease = false;
+        if (!effect.status.lastTargets) effect.status.lastTargets = [];
 
-        trap.teleport = trap.teleport || {};
-        if (typeof trap.teleport.pageId === "undefined") trap.teleport.pageId = "";
-        if (typeof trap.teleport.left === "undefined") trap.teleport.left = 0;
-        if (typeof trap.teleport.top === "undefined") trap.teleport.top = 0;
-        if (typeof trap.teleport.name === "undefined") trap.teleport.name = "";
+        effect.teleport = effect.teleport || {};
+        if (typeof effect.teleport.pageId === "undefined") effect.teleport.pageId = "";
+        if (typeof effect.teleport.left === "undefined") effect.teleport.left = 0;
+        if (typeof effect.teleport.top === "undefined") effect.teleport.top = 0;
+        if (typeof effect.teleport.name === "undefined") effect.teleport.name = "";
 
-        if (!trap.revealTargets) trap.revealTargets = [];
-        if (!trap.spawnTargets) trap.spawnTargets = [];
+        if (!effect.revealTargets) effect.revealTargets = [];
+        if (!effect.spawnTargets) effect.spawnTargets = [];
 
-        trap.effects = trap.effects || {};
-        if (typeof trap.effects.lockToken === "undefined") trap.effects.lockToken = false;
-        if (typeof trap.effects.lockMarker === "undefined") trap.effects.lockMarker = "fishing-net";
-        if (typeof trap.effects.revealAlso === "undefined") trap.effects.revealAlso = false;
+        effect.effects = effect.effects || {};
+        if (typeof effect.effects.lockToken === "undefined") effect.effects.lockToken = false;
+        if (typeof effect.effects.lockMarker === "undefined") effect.effects.lockMarker = "fishing-net";
+        if (typeof effect.effects.revealAlso === "undefined") effect.effects.revealAlso = false;
 
-        return trap;
+        return effect;
+    }
+
+    function getPrimaryEffect(mech) {
+        if (!mech.effects) mech.effects = {};
+        mech.effects.primary = backfillPrimaryEffectConfig(mech.effects.primary);
+        return mech.effects.primary;
     }
 
     function newMechanismData(id) {
@@ -127,6 +149,7 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
             name: "",
             pageId: "",
             sources: [],
+            triggerConfig: defaultTriggerConfig("pressurePlate"),
             rule: {
                 mode: "single",
                 k: 1,
@@ -134,7 +157,7 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
             },
             effects: {
                 doors: {},
-                trap: defaultTrapConfig()
+                primary: defaultPrimaryEffectConfig()
             },
             messages: {
                 on: "",
@@ -216,17 +239,21 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         if (typeof mech.kind === "undefined") mech.kind = "single";
         if (typeof mech.legacyId === "undefined") mech.legacyId = "";
         if (typeof mech.sourceKind === "undefined") mech.sourceKind = "pressurePlate";
+        if (!SOURCE_KINDS[mech.sourceKind]) mech.sourceKind = "pressurePlate";
         if (typeof mech.name === "undefined") mech.name = "";
         if (typeof mech.pageId === "undefined") mech.pageId = "";
         if (!mech.sources) mech.sources = [];
+        mech.triggerConfig = backfillTriggerConfig(mech.sourceKind, mech.triggerConfig);
         mech.rule = mech.rule || {};
         if (typeof mech.rule.mode === "undefined") mech.rule.mode = mech.kind === "single" ? "single" : "kofn";
         if (typeof mech.rule.k === "undefined") mech.rule.k = mech.kind === "single" ? 1 : mech.sources.length;
         if (typeof mech.rule.timing === "undefined") mech.rule.timing = "press";
         mech.effects = mech.effects || {};
         if (!mech.effects.doors) mech.effects.doors = {};
-        if (mech.kind === "single" || mech.effects.trap) mech.effects.trap = backfillTrapConfig(mech.effects.trap);
-        else mech.effects.trap = null;
+        if (mech.effects.trap && !mech.effects.primary) mech.effects.primary = mech.effects.trap;
+        delete mech.effects.trap;
+        if (mech.kind === "single" || mech.effects.primary) mech.effects.primary = backfillPrimaryEffectConfig(mech.effects.primary);
+        else mech.effects.primary = null;
         mech.messages = mech.messages || {};
         if (typeof mech.messages.on === "undefined") mech.messages.on = "";
         if (typeof mech.messages.off === "undefined") mech.messages.off = "";
@@ -239,6 +266,7 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         mech.runtime = mech.runtime || {};
         if (typeof mech.runtime.lastActive === "undefined") mech.runtime.lastActive = false;
         if (!mech.runtime.lastOccupants) mech.runtime.lastOccupants = [];
+        if (typeof mech.runtime.manualActive === "undefined") mech.runtime.manualActive = false;
         return mech;
     }
 
@@ -249,13 +277,14 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         backfillMechanismData(mech);
         mech.kind = "single";
         mech.legacyId = plateId;
-        mech.sourceKind = "pressurePlate";
+        if (!SOURCE_KINDS[mech.sourceKind]) mech.sourceKind = "pressurePlate";
         mech.name = (plate && plate.get("name")) || mech.name || ("Trigger …" + shortId(plateId));
         mech.pageId = plate ? plate.get("_pageid") : mech.pageId;
         mech.sources = [plateId];
+        mech.triggerConfig = backfillTriggerConfig(mech.sourceKind, mech.triggerConfig);
         mech.rule.mode = "single";
         mech.rule.k = 1;
-        mech.effects.trap = backfillTrapConfig(mech.effects.trap);
+        mech.effects.primary = getPrimaryEffect(mech);
         return mech;
     }
 
@@ -270,9 +299,10 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         mech.sourceKind = "pressurePlate";
         mech.name = mechanismName;
         mech.pageId = inferMechanismPageId(mech.sources || []);
+        mech.triggerConfig = backfillTriggerConfig(mech.sourceKind, mech.triggerConfig);
         if (mech.rule.mode === "single") mech.rule.mode = "kofn";
         if (mech.rule.k < 0) mech.rule.k = 0;
-        mech.effects.trap = null;
+        mech.effects.primary = null;
         return mech;
     }
 
@@ -352,9 +382,26 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         return { left: x - w / 2, right: x + w / 2, top: y - h / 2, bottom: y + h / 2 };
     }
 
+    function rectsIntersect(a, b) {
+        return !(a.right < b.left || a.left > b.right || a.bottom < b.top || a.top > b.bottom);
+    }
+
     // token bbox must be FULLY inside plate bbox
     function fullyInside(pr, tr) {
         return (tr.left >= pr.left && tr.right <= pr.right && tr.top >= pr.top && tr.bottom <= pr.bottom);
+    }
+
+    function distanceBetweenGraphics(a, b) {
+        var dx = a.get("left") - b.get("left");
+        var dy = a.get("top") - b.get("top");
+        return Math.sqrt((dx * dx) + (dy * dy));
+    }
+
+    function pageCellSize(pageId) {
+        var page = getObj("page", pageId);
+        var snapping = page ? parseFloat(page.get("snapping_increment"), 10) : 1;
+        if (isNaN(snapping) || snapping <= 0) snapping = 1;
+        return 70 * snapping;
     }
 
     function tokensOnObjectsLayer(pageId) {
@@ -373,6 +420,63 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
             if (fullyInside(pr, rect(toks[i]))) hits.push(toks[i]);
         }
         return hits;
+    }
+
+    function sourceIntersections(sourceGraphic) {
+        var sr = rect(sourceGraphic);
+        var toks = tokensOnObjectsLayer(sourceGraphic.get("_pageid"));
+        var hits = [];
+        for (var i = 0; i < toks.length; i++) {
+            if (rectsIntersect(sr, rect(toks[i]))) hits.push(toks[i]);
+        }
+        return hits;
+    }
+
+    function sourceNearbyTokens(sourceGraphic, triggerConfig) {
+        var toks = tokensOnObjectsLayer(sourceGraphic.get("_pageid"));
+        var hits = [];
+        var radius = backfillTriggerConfig("proximity", triggerConfig).proximityRange * pageCellSize(sourceGraphic.get("_pageid"));
+        for (var i = 0; i < toks.length; i++) {
+            if (distanceBetweenGraphics(sourceGraphic, toks[i]) <= radius) hits.push(toks[i]);
+        }
+        return hits;
+    }
+
+    function sourceKindLabel(kind) {
+        if (kind === "tripwire") return "Tripwire";
+        if (kind === "proximity") return "Proximity";
+        if (kind === "manual") return "Manual";
+        return "Pressure Plate";
+    }
+
+    function sourceStateLabel(kind, active) {
+        if (kind === "manual") return active ? "ACTIVE" : "INACTIVE";
+        if (kind === "tripwire") return active ? "CROSSED" : "CLEAR";
+        if (kind === "proximity") return active ? "IN RANGE" : "CLEAR";
+        return active ? "OCCUPIED" : "CLEAR";
+    }
+
+    function singleMechanismState(mech) {
+        var source = getObj("graphic", mech.sources[0]);
+        var targets = [];
+        var active = false;
+
+        if (mech.sourceKind === "manual") {
+            active = !!mech.runtime.manualActive;
+            return { active: active, targets: [], source: source };
+        }
+        if (!source) return { active: false, targets: [], source: null };
+
+        if (mech.sourceKind === "tripwire") targets = sourceIntersections(source);
+        else if (mech.sourceKind === "proximity") targets = sourceNearbyTokens(source, mech.triggerConfig);
+        else targets = sourceOccupants(source);
+
+        active = targets.length > 0;
+        return { active: active, targets: targets, source: source };
+    }
+
+    function sourceMechanismStateById(sourceId) {
+        return singleMechanismState(getSingleMechanism(sourceId));
     }
 
     /* ---------- door ops ---------- */
@@ -396,14 +500,14 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         }
     }
 
-    function trapFiresOnEdge(trigger, wasActive, isActive) {
+    function primaryEffectFiresOnEdge(trigger, wasActive, isActive) {
         if (trigger === "press") return isActive && !wasActive;
         if (trigger === "release") return !isActive && wasActive;
         if (trigger === "both") return isActive !== wasActive;
         return false;
     }
 
-    function trapTypeLabel(type) {
+    function primaryEffectTypeLabel(type) {
         if (type === "alarm") return "Alarm";
         if (type === "damage") return "Damage";
         if (type === "teleport") return "Teleport";
@@ -414,7 +518,7 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         return "None";
     }
 
-    function trapTriggerLabel(trigger) {
+    function primaryEffectTriggerLabel(trigger) {
         if (trigger === "press") return "Press";
         if (trigger === "release") return "Release";
         if (trigger === "both") return "Both";
@@ -504,9 +608,9 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         if (marker) applyMarkersToToken(token, [marker]);
     }
 
-    function maybeApplyLockEffect(sourceId, trap, tokens) {
-        if (!trap.effects || !trap.effects.lockToken) return;
-        for (var i = 0; i < tokens.length; i++) lockTokenToCurrentPosition(tokens[i], sourceId, trap.effects.lockMarker);
+    function maybeApplyLockEffect(sourceId, effect, tokens) {
+        if (!effect.effects || !effect.effects.lockToken) return;
+        for (var i = 0; i < tokens.length; i++) lockTokenToCurrentPosition(tokens[i], sourceId, effect.effects.lockMarker);
     }
 
     function unlockTokenById(tokenId) {
@@ -570,9 +674,9 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         return changed;
     }
 
-    function maybeApplyRevealEffect(trap) {
-        if (!trap || !trap.revealTargets || !trap.revealTargets.length) return 0;
-        return runRevealTargets(trap.revealTargets);
+    function maybeApplyRevealEffect(effect) {
+        if (!effect || !effect.revealTargets || !effect.revealTargets.length) return 0;
+        return runRevealTargets(effect.revealTargets);
     }
 
     function runTeleport(tokens, dest) {
@@ -604,9 +708,9 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         return changed;
     }
 
-    function formatSaveTrapMessage(targetNames, trap, customMsg) {
+    function formatSaveEffectMessage(targetNames, effect, customMsg) {
         var parts = [];
-        var save = trap.save || {};
+        var save = effect.save || {};
         var label = String(save.label || "DEX").toUpperCase();
         var dc = parseInt(save.dc, 10);
         var damageType = String(save.damageType || "").replace(/^\s+|\s+$/g, "");
@@ -626,72 +730,72 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         return parts.join(" ");
     }
 
-    function firePlateTrap(plate, pdata, targets) {
-        if (!plate || !pdata) return;
+    function executePrimaryEffect(source, effect, targets) {
+        if (!source || !effect) return;
 
-        var trap = backfillTrapConfig(pdata.trap);
-        if (!trap.enabled || trap.type === "none") return;
+        effect = backfillPrimaryEffectConfig(effect);
+        if (!effect.enabled || effect.type === "none") return;
 
-        var plateName = plate.get("name") || ("Plate …" + shortId(plate.id));
-        var targetNames = targets.length ? joinTokenNames(targets) : plateName;
-        var customMsg = String(trap.message || "").trim();
+        var sourceName = source.get("name") || ("Trigger …" + shortId(source.id));
+        var targetNames = targets.length ? joinTokenNames(targets) : sourceName;
+        var customMsg = String(effect.message || "").trim();
         var revealCount = 0;
 
-        if (trap.type !== "reveal" && trap.effects && trap.effects.revealAlso) {
-            revealCount = maybeApplyRevealEffect(trap);
+        if (effect.type !== "reveal" && effect.effects && effect.effects.revealAlso) {
+            revealCount = maybeApplyRevealEffect(effect);
         }
 
-        if (trap.type === "alarm") {
-            postTriggerMessage(customMsg || ("Trap triggered at " + plateName + "."));
-            maybeApplyLockEffect(plate.id, trap, targets);
+        if (effect.type === "alarm") {
+            postTriggerMessage(customMsg || ("Effect triggered at " + sourceName + "."));
+            maybeApplyLockEffect(source.id, effect, targets);
             return;
         }
 
-        if (trap.type === "damage") {
-            postTriggerMessage((customMsg || "Trap hits") + ": " + targetNames + " take [[" + String(trap.damage || "1d6") + "]] damage.");
-            maybeApplyLockEffect(plate.id, trap, targets);
+        if (effect.type === "damage") {
+            postTriggerMessage((customMsg || "Effect hits") + ": " + targetNames + " take [[" + String(effect.damage || "1d6") + "]] damage.");
+            maybeApplyLockEffect(source.id, effect, targets);
             return;
         }
 
-        if (trap.type === "teleport") {
-            if (!trap.teleport.pageId) return;
+        if (effect.type === "teleport") {
+            if (!effect.teleport.pageId) return;
             if (!targets.length) return;
 
-            var moved = runTeleport(targets, trap.teleport);
-            maybeApplyLockEffect(plate.id, trap, targets);
+            var moved = runTeleport(targets, effect.teleport);
+            maybeApplyLockEffect(source.id, effect, targets);
             if (moved && customMsg) postTriggerMessage(customMsg);
             return;
         }
 
-        if (trap.type === "reveal") {
-            var revealed = maybeApplyRevealEffect(trap);
-            maybeApplyLockEffect(plate.id, trap, targets);
+        if (effect.type === "reveal") {
+            var revealed = maybeApplyRevealEffect(effect);
+            maybeApplyLockEffect(source.id, effect, targets);
             if (revealed && customMsg) postTriggerMessage(customMsg);
             return;
         }
 
-        if (trap.type === "save") {
-            postTriggerMessage(formatSaveTrapMessage(targetNames, trap, customMsg));
+        if (effect.type === "save") {
+            postTriggerMessage(formatSaveEffectMessage(targetNames, effect, customMsg));
             if (revealCount && !customMsg) postTriggerMessage("Hidden elements are revealed.");
-            maybeApplyLockEffect(plate.id, trap, targets);
+            maybeApplyLockEffect(source.id, effect, targets);
             return;
         }
 
-        if (trap.type === "status") {
-            var markers = parseMarkerList(trap.status.markers);
+        if (effect.type === "status") {
+            var markers = parseMarkerList(effect.status.markers);
             for (var i = 0; i < targets.length; i++) applyMarkersToToken(targets[i], markers);
-            trap.status.lastTargets = [];
-            for (i = 0; i < targets.length; i++) trap.status.lastTargets.push(targets[i].id);
+            effect.status.lastTargets = [];
+            for (i = 0; i < targets.length; i++) effect.status.lastTargets.push(targets[i].id);
             if (customMsg) postTriggerMessage(customMsg);
-            maybeApplyLockEffect(plate.id, trap, targets);
+            maybeApplyLockEffect(source.id, effect, targets);
             return;
         }
 
-        if (trap.type === "spawn") {
-            var spawned = runSpawnTargets(trap.spawnTargets || []);
-            if (spawned) postTriggerMessage(customMsg || ("Spawn trap triggered at " + plateName + "."));
+        if (effect.type === "spawn") {
+            var spawned = runSpawnTargets(effect.spawnTargets || []);
+            if (spawned) postTriggerMessage(customMsg || ("Spawn effect triggered at " + sourceName + "."));
             if (revealCount && !customMsg) postTriggerMessage("Hidden elements are revealed.");
-            maybeApplyLockEffect(plate.id, trap, targets);
+            maybeApplyLockEffect(source.id, effect, targets);
             return;
         }
     }
@@ -700,9 +804,7 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
     function countActiveMechanismSources(mech) {
         var count = 0;
         for (var i = 0; i < mech.sources.length; i++) {
-            var source = getObj("graphic", mech.sources[i]);
-            if (!source) continue;
-            if (isSourceOccupied(source)) count++;
+            if (sourceMechanismStateById(mech.sources[i]).active) count++;
         }
         return count;
     }
@@ -720,29 +822,29 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         backfillMechanismData(mech);
 
         if (mech.kind === "single") {
-            var source = getObj("graphic", mech.sources[0]);
-            if (!source) return;
-
-            var trap = backfillTrapConfig(mech.effects.trap);
-            var occupants = sourceOccupants(source);
+            var primary = getPrimaryEffect(mech);
+            var sourceState = singleMechanismState(mech);
+            var source = sourceState.source;
+            if (!source && mech.sourceKind !== "manual") return;
+            var occupants = sourceState.targets;
             var prevOccupants = getGraphicsByIds(mech.runtime.lastOccupants);
             var wasActive = !!mech.runtime.lastActive;
-            var occ = occupants.length > 0;
+            var occ = sourceState.active;
 
             if (occ && !wasActive) postTriggerMessage(mech.messages.on);
             if (!occ && wasActive) postTriggerMessage(mech.messages.off);
 
             applyDoorEffects(mech.effects.doors, occ);
 
-            if (!occ && wasActive && trap.type === "status" && trap.status.clearOnRelease && mech.rule.timing === "press") {
-                var clearMarkers = parseMarkerList(trap.status.markers);
-                var clearTargets = getGraphicsByIds(trap.status.lastTargets);
+            if (!occ && wasActive && primary.type === "status" && primary.status.clearOnRelease && mech.rule.timing === "press") {
+                var clearMarkers = parseMarkerList(primary.status.markers);
+                var clearTargets = getGraphicsByIds(primary.status.lastTargets);
                 for (var i = 0; i < clearTargets.length; i++) removeMarkersFromToken(clearTargets[i], clearMarkers);
-                trap.status.lastTargets = [];
+                primary.status.lastTargets = [];
             }
 
-            if (trap && trapFiresOnEdge(mech.rule.timing, wasActive, occ)) {
-                firePlateTrap(source, { trap: trap }, occ ? occupants : prevOccupants);
+            if (primary && primaryEffectFiresOnEdge(mech.rule.timing, wasActive, occ)) {
+                executePrimaryEffect(source || { id: mech.legacyId, get: function () { return mech.name; } }, primary, occ ? occupants : prevOccupants);
             }
 
             mech.runtime.lastActive = occ;
@@ -1038,8 +1140,10 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
     }
 
     /* ---------- commands: singles ---------- */
-    function cmdMakePlateFromSelected(msg, plateName) {
+    function cmdMakePlateFromSelected(msg, plateName, sourceKind) {
         var sel = msg.selected || [];
+        sourceKind = String(sourceKind || "pressurePlate");
+        if (!SOURCE_KINDS[sourceKind]) sourceKind = "pressurePlate";
 
         if (!sel.length) {
             whisper("Select one or more tokens, then run <code>!mech make</code>.");
@@ -1065,12 +1169,59 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
                 o.set({ name: newName });
 
                 getSingleMechanism(o.id);
+                updateSingleMechanism(o.id, function (mech) {
+                    mech.sourceKind = sourceKind;
+                    mech.triggerConfig = backfillTriggerConfig(sourceKind, mech.triggerConfig);
+                    if (sourceKind !== "manual") mech.runtime.manualActive = false;
+                });
             }
         }
 
         setUIPage(msg.playerid);
         evaluateAll();
         renderUI(msg.playerid);
+    }
+
+    function cmdSetSingleSourceKind(sourceId, sourceKind) {
+        sourceKind = String(sourceKind || "").replace(/^\s+|\s+$/g, "");
+        if (!SOURCE_KINDS[sourceKind]) {
+            whisper("Source type must be <code>pressurePlate</code>, <code>tripwire</code>, <code>proximity</code>, or <code>manual</code>.");
+            return;
+        }
+        updateSingleMechanism(sourceId, function (mech) {
+            mech.sourceKind = sourceKind;
+            mech.triggerConfig = backfillTriggerConfig(sourceKind, mech.triggerConfig);
+            if (sourceKind !== "manual") mech.runtime.manualActive = false;
+        });
+        whisper("Trigger …" + esc(shortId(sourceId)) + " source type set to <b>" + esc(sourceKindLabel(sourceKind).toUpperCase()) + "</b>.");
+    }
+
+    function cmdSetProximityRange(sourceId, range) {
+        range = parseFloat(range, 10);
+        if (isNaN(range) || range < 0) range = 1;
+        updateSingleMechanism(sourceId, function (mech) {
+            mech.sourceKind = "proximity";
+            mech.triggerConfig.proximityRange = range;
+        });
+        whisper("Trigger …" + esc(shortId(sourceId)) + " proximity range set to <b>" + esc(String(range)) + "</b> cell(s).");
+    }
+
+    function cmdSetManualState(sourceId, active) {
+        var mech = updateSingleMechanism(sourceId, function (mech) {
+            mech.sourceKind = "manual";
+            mech.runtime.manualActive = active;
+        });
+        evaluateSingleMechanism(sourceId);
+        whisper("Trigger …" + esc(shortId(sourceId)) + " manual state is now " + (mech.runtime.manualActive ? "<b>ACTIVE</b>" : "<b>INACTIVE</b>") + ".");
+    }
+
+    function cmdToggleManualState(sourceId) {
+        var mech = updateSingleMechanism(sourceId, function (mech) {
+            mech.sourceKind = "manual";
+            mech.runtime.manualActive = !mech.runtime.manualActive;
+        });
+        evaluateSingleMechanism(sourceId);
+        whisper("Trigger …" + esc(shortId(sourceId)) + " manual state is now " + (mech.runtime.manualActive ? "<b>ACTIVE</b>" : "<b>INACTIVE</b>") + ".");
     }
 
     function cmdAddSingle(msg, mode) {
@@ -1149,89 +1300,91 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         whisper("Trigger …" + esc(shortId(plateId)) + " release message set.");
     }
 
-    function cmdTrapToggle(plateId) {
+    function cmdEffectToggle(plateId) {
         var mech = updateSingleMechanism(plateId, function (mech) {
-            mech.effects.trap.enabled = !mech.effects.trap.enabled;
-            if (mech.effects.trap.enabled && mech.effects.trap.type === "none") mech.effects.trap.type = "alarm";
+            var primary = getPrimaryEffect(mech);
+            primary.enabled = !primary.enabled;
+            if (primary.enabled && primary.type === "none") primary.type = "alarm";
         });
-        whisper("Trigger …" + esc(shortId(plateId)) + " trap is now " + (mech.effects.trap.enabled ? "<b>ENABLED</b>" : "<b>DISABLED</b>") + ".");
+        whisper("Trigger …" + esc(shortId(plateId)) + " primary effect is now " + (mech.effects.primary.enabled ? "<b>ENABLED</b>" : "<b>DISABLED</b>") + ".");
     }
 
-    function cmdTrapType(plateId, type) {
+    function cmdEffectType(plateId, type) {
         type = String(type || "").toLowerCase();
 
-        if (!TRAP_TYPES[type]) {
-            whisper("Trap type must be one of: <code>alarm</code>, <code>damage</code>, <code>teleport</code>, <code>reveal</code>, <code>save</code>, <code>status</code>, <code>spawn</code>, <code>none</code>.");
+        if (!PRIMARY_EFFECT_TYPES[type]) {
+            whisper("Primary effect must be one of: <code>alarm</code>, <code>damage</code>, <code>teleport</code>, <code>reveal</code>, <code>save</code>, <code>status</code>, <code>spawn</code>, <code>none</code>.");
             return;
         }
 
         updateSingleMechanism(plateId, function (mech) {
-            mech.effects.trap.type = type;
-            mech.effects.trap.enabled = (type !== "none");
+            var primary = getPrimaryEffect(mech);
+            primary.type = type;
+            primary.enabled = (type !== "none");
         });
-        whisper("Trigger …" + esc(shortId(plateId)) + " trap type set to <b>" + esc(trapTypeLabel(type).toUpperCase()) + "</b>.");
+        whisper("Trigger …" + esc(shortId(plateId)) + " primary effect set to <b>" + esc(primaryEffectTypeLabel(type).toUpperCase()) + "</b>.");
     }
 
-    function cmdTrapTrigger(plateId, trigger) {
+    function cmdEffectTrigger(plateId, trigger) {
         trigger = String(trigger || "").toLowerCase();
 
-        if (!TRAP_TRIGGERS[trigger]) {
-            whisper("Trap trigger must be <code>press</code>, <code>release</code>, or <code>both</code>.");
+        if (!PRIMARY_EFFECT_TRIGGERS[trigger]) {
+            whisper("Primary effect trigger must be <code>press</code>, <code>release</code>, or <code>both</code>.");
             return;
         }
 
         updateSingleMechanism(plateId, function (mech) {
             mech.rule.timing = trigger;
-            mech.effects.trap.trigger = trigger;
+            getPrimaryEffect(mech).trigger = trigger;
         });
-        whisper("Trigger …" + esc(shortId(plateId)) + " trap trigger set to <b>" + esc(trapTriggerLabel(trigger).toUpperCase()) + "</b>.");
+        whisper("Trigger …" + esc(shortId(plateId)) + " effect trigger set to <b>" + esc(primaryEffectTriggerLabel(trigger).toUpperCase()) + "</b>.");
     }
 
-    function cmdTrapMessage(plateId, msgText) {
+    function cmdEffectMessage(plateId, msgText) {
         updateSingleMechanism(plateId, function (mech) {
-            mech.effects.trap.message = String(msgText || "");
+            getPrimaryEffect(mech).message = String(msgText || "");
         });
-        whisper("Trigger …" + esc(shortId(plateId)) + " trap message set.");
+        whisper("Trigger …" + esc(shortId(plateId)) + " effect message set.");
     }
 
-    function cmdTrapDamage(plateId, dmgExpr) {
+    function cmdEffectDamage(plateId, dmgExpr) {
         var mech = updateSingleMechanism(plateId, function (mech) {
-            mech.effects.trap.damage = String(dmgExpr || "").trim() || "1d6";
+            getPrimaryEffect(mech).damage = String(dmgExpr || "").trim() || "1d6";
         });
-        whisper("Trigger …" + esc(shortId(plateId)) + " damage roll set to <b>" + esc(mech.effects.trap.damage) + "</b>.");
+        whisper("Trigger …" + esc(shortId(plateId)) + " damage roll set to <b>" + esc(mech.effects.primary.damage) + "</b>.");
     }
 
-    function cmdTrapSaveLabel(plateId, label) {
+    function cmdEffectSaveLabel(plateId, label) {
         var mech = updateSingleMechanism(plateId, function (mech) {
-            mech.effects.trap.save.label = String(label || "").replace(/^\s+|\s+$/g, "").toUpperCase() || "DEX";
+            getPrimaryEffect(mech).save.label = String(label || "").replace(/^\s+|\s+$/g, "").toUpperCase() || "DEX";
         });
-        whisper("Trigger …" + esc(shortId(plateId)) + " save label set to <b>" + esc(mech.effects.trap.save.label) + "</b>.");
+        whisper("Trigger …" + esc(shortId(plateId)) + " save label set to <b>" + esc(mech.effects.primary.save.label) + "</b>.");
     }
 
-    function cmdTrapSaveDc(plateId, dc) {
+    function cmdEffectSaveDc(plateId, dc) {
         dc = parseInt(dc, 10);
         if (isNaN(dc) || dc < 1) dc = 12;
         updateSingleMechanism(plateId, function (mech) {
-            mech.effects.trap.save.dc = dc;
+            getPrimaryEffect(mech).save.dc = dc;
         });
         whisper("Trigger …" + esc(shortId(plateId)) + " save DC set to <b>" + esc(String(dc)) + "</b>.");
     }
 
-    function cmdTrapSaveSuccessMsg(plateId, msgText) {
+    function cmdEffectSaveSuccessMsg(plateId, msgText) {
         updateSingleMechanism(plateId, function (mech) {
-            mech.effects.trap.save.successMsg = String(msgText || "");
+            getPrimaryEffect(mech).save.successMsg = String(msgText || "");
         });
         whisper("Trigger …" + esc(shortId(plateId)) + " save success text set.");
     }
 
-    function cmdTrapSaveFailMsg(plateId, msgText) {
+    function cmdEffectSaveFailMsg(plateId, msgText) {
         updateSingleMechanism(plateId, function (mech) {
-            mech.effects.trap.save.failMsg = String(msgText || "");
+            getPrimaryEffect(mech).save.failMsg = String(msgText || "");
         });
         whisper("Trigger …" + esc(shortId(plateId)) + " save fail text set.");
     }
 
-    function cmdTrapSaveSuccessMode(plateId, mode) {
+    function cmdEffectSaveSuccessMode(plateId, mode) {
         mode = String(mode || "").toLowerCase();
         if (mode !== "half" && mode !== "none") {
             whisper("Save success must be <code>half</code> or <code>none</code>.");
@@ -1239,40 +1392,41 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         }
 
         updateSingleMechanism(plateId, function (mech) {
-            mech.effects.trap.save.successMode = mode;
+            getPrimaryEffect(mech).save.successMode = mode;
         });
         whisper("Trigger …" + esc(shortId(plateId)) + " save success set to <b>" + esc(mode.toUpperCase()) + "</b>.");
     }
 
-    function cmdTrapSaveDamageType(plateId, dmgType) {
+    function cmdEffectSaveDamageType(plateId, dmgType) {
         updateSingleMechanism(plateId, function (mech) {
-            mech.effects.trap.save.damageType = String(dmgType || "").replace(/^\s+|\s+$/g, "");
+            getPrimaryEffect(mech).save.damageType = String(dmgType || "").replace(/^\s+|\s+$/g, "");
         });
         whisper("Trigger …" + esc(shortId(plateId)) + " save damage type set.");
     }
 
-    function cmdTrapSaveFailDamage(plateId, dmgExpr) {
+    function cmdEffectSaveFailDamage(plateId, dmgExpr) {
         updateSingleMechanism(plateId, function (mech) {
-            mech.effects.trap.save.failDamage = String(dmgExpr || "").replace(/^\s+|\s+$/g, "");
+            getPrimaryEffect(mech).save.failDamage = String(dmgExpr || "").replace(/^\s+|\s+$/g, "");
         });
         whisper("Trigger …" + esc(shortId(plateId)) + " save fail damage set.");
     }
 
-    function cmdTrapStatusMarkers(plateId, markers) {
+    function cmdEffectStatusMarkers(plateId, markers) {
         updateSingleMechanism(plateId, function (mech) {
-            mech.effects.trap.status.markers = String(markers || "");
+            getPrimaryEffect(mech).status.markers = String(markers || "");
         });
         whisper("Trigger …" + esc(shortId(plateId)) + " status markers set.");
     }
 
-    function cmdTrapStatusClearToggle(plateId) {
+    function cmdEffectStatusClearToggle(plateId) {
         var mech = updateSingleMechanism(plateId, function (mech) {
-            mech.effects.trap.status.clearOnRelease = !mech.effects.trap.status.clearOnRelease;
+            var primary = getPrimaryEffect(mech);
+            primary.status.clearOnRelease = !primary.status.clearOnRelease;
         });
-        whisper("Trigger …" + esc(shortId(plateId)) + " clear-on-release is now " + (mech.effects.trap.status.clearOnRelease ? "<b>ON</b>" : "<b>OFF</b>") + ".");
+        whisper("Trigger …" + esc(shortId(plateId)) + " clear-on-release is now " + (mech.effects.primary.status.clearOnRelease ? "<b>ON</b>" : "<b>OFF</b>") + ".");
     }
 
-    function cmdTrapSetTeleport(msg, plateId) {
+    function cmdEffectSetTeleport(msg, plateId) {
         var sel = msg.selected || [];
         var marker = null;
 
@@ -1286,12 +1440,12 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         }
 
         if (!marker) {
-            whisper("Select one destination token/graphic, then run <code>!mech trapsetteleport " + esc(plateId) + "</code>.");
+            whisper("Select one destination token/graphic, then run <code>!mech effectsetteleport " + esc(plateId) + "</code>.");
             return;
         }
 
         updateSingleMechanism(plateId, function (mech) {
-            mech.effects.trap.teleport = {
+            getPrimaryEffect(mech).teleport = {
                 pageId: marker.get("_pageid"),
                 left: marker.get("left"),
                 top: marker.get("top"),
@@ -1301,14 +1455,14 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         whisper("Teleport destination saved for trigger …" + esc(shortId(plateId)) + ".");
     }
 
-    function cmdTrapClearTeleport(plateId) {
+    function cmdEffectClearTeleport(plateId) {
         updateSingleMechanism(plateId, function (mech) {
-            mech.effects.trap.teleport = defaultTrapConfig().teleport;
+            getPrimaryEffect(mech).teleport = defaultPrimaryEffectConfig().teleport;
         });
         whisper("Teleport destination cleared for trigger …" + esc(shortId(plateId)) + ".");
     }
 
-    function cmdTrapSetReveal(msg, plateId) {
+    function cmdEffectSetReveal(msg, plateId) {
         var sel = msg.selected || [];
         var refs = [];
 
@@ -1323,24 +1477,24 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         }
 
         if (!refs.length) {
-            whisper("Select one or more hidden graphics or secret doors, then run <code>!mech trapsetreveal " + esc(plateId) + "</code>.");
+            whisper("Select one or more hidden graphics or secret doors, then run <code>!mech effectsetreveal " + esc(plateId) + "</code>.");
             return;
         }
 
         updateSingleMechanism(plateId, function (mech) {
-            mech.effects.trap.revealTargets = refs;
+            getPrimaryEffect(mech).revealTargets = refs;
         });
         whisper("Reveal targets saved for trigger …" + esc(shortId(plateId)) + ".");
     }
 
-    function cmdTrapClearReveal(plateId) {
+    function cmdEffectClearReveal(plateId) {
         updateSingleMechanism(plateId, function (mech) {
-            mech.effects.trap.revealTargets = [];
+            getPrimaryEffect(mech).revealTargets = [];
         });
         whisper("Reveal targets cleared for trigger …" + esc(shortId(plateId)) + ".");
     }
 
-    function cmdTrapSetSpawn(msg, plateId) {
+    function cmdEffectSetSpawn(msg, plateId) {
         var sel = msg.selected || [];
         var ids = [];
 
@@ -1352,50 +1506,52 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         }
 
         if (!ids.length) {
-            whisper("Select one or more GM-layer spawn tokens, then run <code>!mech trapsetspawn " + esc(plateId) + "</code>.");
+            whisper("Select one or more GM-layer spawn tokens, then run <code>!mech effectsetspawn " + esc(plateId) + "</code>.");
             return;
         }
 
         updateSingleMechanism(plateId, function (mech) {
-            mech.effects.trap.spawnTargets = ids;
+            getPrimaryEffect(mech).spawnTargets = ids;
         });
         whisper("Spawn targets saved for trigger …" + esc(shortId(plateId)) + ".");
     }
 
-    function cmdTrapClearSpawn(plateId) {
+    function cmdEffectClearSpawn(plateId) {
         updateSingleMechanism(plateId, function (mech) {
-            mech.effects.trap.spawnTargets = [];
+            getPrimaryEffect(mech).spawnTargets = [];
         });
         whisper("Spawn targets cleared for trigger …" + esc(shortId(plateId)) + ".");
     }
 
-    function cmdTrapLockToggle(plateId) {
+    function cmdEffectLockToggle(plateId) {
         var mech = updateSingleMechanism(plateId, function (mech) {
-            mech.effects.trap.effects.lockToken = !mech.effects.trap.effects.lockToken;
+            var primary = getPrimaryEffect(mech);
+            primary.effects.lockToken = !primary.effects.lockToken;
         });
-        whisper("Trigger …" + esc(shortId(plateId)) + " lock-token effect is now " + (mech.effects.trap.effects.lockToken ? "<b>ON</b>" : "<b>OFF</b>") + ".");
+        whisper("Trigger …" + esc(shortId(plateId)) + " lock-token effect is now " + (mech.effects.primary.effects.lockToken ? "<b>ON</b>" : "<b>OFF</b>") + ".");
     }
 
-    function cmdTrapLockMarker(plateId, marker) {
+    function cmdEffectLockMarker(plateId, marker) {
         updateSingleMechanism(plateId, function (mech) {
-            mech.effects.trap.effects.lockMarker = String(marker || "").replace(/^\s+|\s+$/g, "");
+            getPrimaryEffect(mech).effects.lockMarker = String(marker || "").replace(/^\s+|\s+$/g, "");
         });
         whisper("Trigger …" + esc(shortId(plateId)) + " lock marker updated.");
     }
 
-    function cmdTrapRevealToggle(plateId) {
+    function cmdEffectRevealToggle(plateId) {
         var mech = updateSingleMechanism(plateId, function (mech) {
-            mech.effects.trap.effects.revealAlso = !mech.effects.trap.effects.revealAlso;
+            var primary = getPrimaryEffect(mech);
+            primary.effects.revealAlso = !primary.effects.revealAlso;
         });
-        whisper("Trigger …" + esc(shortId(plateId)) + " reveal effect is now " + (mech.effects.trap.effects.revealAlso ? "<b>ON</b>" : "<b>OFF</b>") + ".");
+        whisper("Trigger …" + esc(shortId(plateId)) + " reveal effect is now " + (mech.effects.primary.effects.revealAlso ? "<b>ON</b>" : "<b>OFF</b>") + ".");
     }
 
-    function cmdTrapUnlock(plateId) {
+    function cmdEffectUnlock(plateId) {
         var count = unlockTokensForSource(plateId);
         whisper("Unlocked <b>" + esc(String(count)) + "</b> token(s) for trigger …" + esc(shortId(plateId)) + ".");
     }
 
-    function renderTrapUI(playerid, plateId) {
+    function renderEffectUI(playerid, plateId) {
         return renderMechanismEditor(playerid, plateId);
     }
 
@@ -1417,9 +1573,10 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         backfillMechanismData(mech);
 
         var isSingle = mech.kind === "single";
-        var trap = isSingle ? backfillTrapConfig(mech.effects.trap) : null;
+        var trap = isSingle ? getPrimaryEffect(mech) : null;
         var sourceId = isSingle ? mech.legacyId : "";
         var sourceObj = isSingle ? getObj("graphic", sourceId) : null;
+        var singleState = isSingle ? singleMechanismState(mech) : null;
         var active = mechanismIsActive(mech);
         var required = mechanismRequiredCount(mech);
         var pressed = countActiveMechanismSources(mech);
@@ -1437,7 +1594,7 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         html += "<div style=\"border:2px solid #111;border-radius:10px;padding:10px;margin-bottom:10px;\">";
         html += badge(active ? "ACTIVE" : "INACTIVE", active);
         html += badge(isSingle ? "SINGLE" : "MULTI", false);
-        if (isSingle) html += badge((trap.enabled && trap.type !== "none") ? "TRAP ENABLED" : "TRAP DISABLED", false);
+        if (isSingle) html += badge((trap.enabled && trap.type !== "none") ? "PRIMARY EFFECT" : "NO PRIMARY EFFECT", false);
         if (!isSingle && mech.locks.mechanismLocked) html += badge(mech.locks.freezeWhenLocked ? "FROZEN" : "LOCKED", false);
         if (!isSingle && mech.locks.configLocked) html += badge("CONFIG", false);
         if (overrideActive) html += badge("OVERRIDE", true);
@@ -1457,7 +1614,7 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
             else html += iconBtn("🗑️", "!mech groupremove " + mech.legacyId, "Remove mechanism");
         }
         if (isSingle) {
-            html += iconBtn("💣", "!mech traptoggle " + sourceId, (trap.enabled && trap.type !== "none") ? "Disable trap" : "Enable trap");
+            html += iconBtn("💣", "!mech effecttoggle " + sourceId, (trap.enabled && trap.type !== "none") ? "Disable primary effect" : "Enable primary effect");
         } else {
             html += iconBtn(mech.locks.mechanismLocked ? "🔒" : "🔓", "!mech grouplock " + mech.legacyId, "Toggle mechanism lock");
             html += iconBtn(mech.locks.configLocked ? "🧱" : "✏️", "!mech groupcfglock " + mech.legacyId, "Toggle config lock");
@@ -1465,8 +1622,9 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
             html += iconBtn("🔁", "!mech groupreset " + mech.legacyId, "Reset trigger state");
         }
         html += "</div>";
-        if (isSingle && sourceObj) {
-            html += "<div style=\"margin-top:8px;font-weight:900;\">State: <span style=\"color:#333;\">" + esc(isSourceOccupied(sourceObj) ? "OCCUPIED" : "CLEAR") + "</span></div>";
+        if (isSingle) {
+            html += "<div style=\"margin-top:8px;font-weight:900;\">Source type: <span style=\"color:#333;\">" + esc(sourceKindLabel(mech.sourceKind)) + "</span></div>";
+            html += "<div style=\"margin-top:4px;font-weight:900;\">State: <span style=\"color:#333;\">" + esc(sourceStateLabel(mech.sourceKind, singleState.active)) + "</span></div>";
         } else if (!isSingle) {
             html += "<div style=\"margin-top:8px;font-weight:900;\">Pressed: <span style=\"color:#333;\">" + esc(String(pressed)) + "/" + esc(String(required)) + "</span></div>";
         }
@@ -1497,17 +1655,17 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         html += '<div style="margin-top:8px;font-weight:900;">On: <span style="color:#333;">' + esc(mech.messages.on || "(none)") + "</span></div>";
         html += '<div style="margin-top:4px;font-weight:900;">Off: <span style="color:#333;">' + esc(mech.messages.off || "(none)") + "</span></div>";
         if (isSingle) {
-            html += '<div style="margin-top:8px;font-weight:900;">Trap message: <span style="color:#333;">' + esc(String(trap.message || "").trim() || "(none)") + "</span></div>";
-            html += mini("Set trap message", "!mech trapmsg " + sourceId + " ?{Trap message|}", "Set trap narration");
+            html += '<div style="margin-top:8px;font-weight:900;">Primary effect message: <span style="color:#333;">' + esc(String(trap.message || "").trim() || "(none)") + "</span></div>";
+            html += mini("Set effect message", "!mech effectmsg " + sourceId + " ?{Effect message|}", "Set primary effect narration");
         }
         html += "</div>";
 
         html += '<div style="border:2px solid #111;border-radius:10px;padding:10px;margin-bottom:10px;">';
         html += '<div style="font-weight:900;font-size:16px;margin-bottom:6px;">Rule</div>';
         if (isSingle) {
-            html += mini("Press", "!mech traptrigger " + sourceId + " press", "Fire on press");
-            html += mini("Release", "!mech traptrigger " + sourceId + " release", "Fire on release");
-            html += mini("Both", "!mech traptrigger " + sourceId + " both", "Fire on press and release");
+            html += mini("Press", "!mech effecttrigger " + sourceId + " press", "Fire on press");
+            html += mini("Release", "!mech effecttrigger " + sourceId + " release", "Fire on release");
+            html += mini("Both", "!mech effecttrigger " + sourceId + " both", "Fire on press and release");
         } else if (editBlocked) {
             html += miniDisabled("Require ALL", "Config locked");
             html += miniDisabled("Set K", "Config locked");
@@ -1517,6 +1675,26 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         }
         html += '<div style="margin-top:8px;font-weight:900;">Current: <span style="color:#333;">' + esc(mechanismRuleSummary(mech)) + "</span></div>";
         html += "</div>";
+
+        if (isSingle) {
+            html += '<div style="border:2px solid #111;border-radius:10px;padding:10px;margin-bottom:10px;background:#fafafa;">';
+            html += '<div style="font-weight:900;font-size:16px;margin-bottom:6px;">Trigger Type</div>';
+            html += mini("Pressure Plate", "!mech sourcetype " + sourceId + " pressurePlate", "Require full occupancy");
+            html += mini("Tripwire", "!mech sourcetype " + sourceId + " tripwire", "Trigger on any overlap");
+            html += mini("Proximity", "!mech sourcetype " + sourceId + " proximity", "Trigger when tokens enter a radius");
+            html += mini("Manual", "!mech sourcetype " + sourceId + " manual", "GM-controlled trigger state");
+            html += '<div style="margin-top:8px;font-weight:900;">Current: <span style="color:#333;">' + esc(sourceKindLabel(mech.sourceKind)) + "</span></div>";
+            if (mech.sourceKind === "proximity") {
+                html += mini("Set range", "!mech proximityrange " + sourceId + " ?{Range in cells|1}", "Set proximity radius");
+                html += '<div style="margin-top:4px;font-weight:900;">Range: <span style="color:#333;">' + esc(String(mech.triggerConfig.proximityRange)) + " cell(s)</span></div>";
+            }
+            if (mech.sourceKind === "manual") {
+                html += mini("Activate", "!mech manualon " + sourceId, "Set manual trigger active");
+                html += mini("Deactivate", "!mech manualoff " + sourceId, "Set manual trigger inactive");
+                html += mini("Toggle", "!mech manualtoggle " + sourceId, "Toggle manual trigger state");
+            }
+            html += "</div>";
+        }
 
         html += '<div style="border:2px solid #111;border-radius:10px;padding:10px;margin-bottom:10px;background:#fafafa;">';
         html += '<div style="font-weight:900;font-size:16px;margin-bottom:6px;">Sources</div>';
@@ -1528,6 +1706,7 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
             var src = getObj("graphic", mech.sources[i]);
             if (!src) continue;
             html += '<div style="margin-top:6px;font-weight:900;">' + esc(src.get("name") || ("Trigger …" + shortId(src.id))) + ' ';
+            html += '<span style="color:#666;">(' + esc(sourceKindLabel(getSingleMechanism(src.id).sourceKind)) + ')</span> ';
             html += mini("Ping", "!mech ping " + src.id, "Ping source");
             if (!isSingle) {
                 if (editBlocked) html += miniDisabled("Remove", "Config locked");
@@ -1565,22 +1744,22 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         if (isSingle) {
             html += '<div style="border:2px solid #111;border-radius:10px;padding:10px;margin-bottom:10px;background:#fafafa;">';
             html += '<div style="font-weight:900;font-size:16px;margin-bottom:6px;">Primary Effect</div>';
-            html += mini("Alarm", "!mech traptype " + sourceId + " alarm", "Narration or warning trap");
-            html += mini("Damage", "!mech traptype " + sourceId + " damage", "Damage trap");
-            html += mini("Save", "!mech traptype " + sourceId + " save", "Save/check prompt trap");
-            html += mini("Status", "!mech traptype " + sourceId + " status", "Apply status markers");
-            html += mini("Spawn", "!mech traptype " + sourceId + " spawn", "Reveal selected spawn tokens");
-            html += mini("Teleport", "!mech traptype " + sourceId + " teleport", "Teleport occupants");
-            html += mini("Reveal", "!mech traptype " + sourceId + " reveal", "Reveal hidden targets");
-            html += mini("Disable", "!mech traptype " + sourceId + " none", "Disable trap without removing mechanism");
-            html += '<div style="margin-top:8px;font-weight:900;">Current type: <span style="color:#333;">' + esc(trapTypeLabel(trap.type)) + "</span></div>";
+            html += mini("Alarm", "!mech effecttype " + sourceId + " alarm", "Narration or warning effect");
+            html += mini("Damage", "!mech effecttype " + sourceId + " damage", "Damage effect");
+            html += mini("Save", "!mech effecttype " + sourceId + " save", "Save/check prompt effect");
+            html += mini("Status", "!mech effecttype " + sourceId + " status", "Apply status markers");
+            html += mini("Spawn", "!mech effecttype " + sourceId + " spawn", "Reveal selected spawn tokens");
+            html += mini("Teleport", "!mech effecttype " + sourceId + " teleport", "Teleport occupants");
+            html += mini("Reveal", "!mech effecttype " + sourceId + " reveal", "Reveal hidden targets");
+            html += mini("Disable", "!mech effecttype " + sourceId + " none", "Disable primary effect without removing mechanism");
+            html += '<div style="margin-top:8px;font-weight:900;">Current type: <span style="color:#333;">' + esc(primaryEffectTypeLabel(trap.type)) + "</span></div>";
             html += '<div style="margin-top:4px;font-weight:900;">Effects: <span style="color:#333;">' + esc(mechanismEffectSummary(mech)) + "</span></div>";
             html += "</div>";
 
             if (trap.type === "damage") {
                 html += '<div style="border:2px solid #111;border-radius:10px;padding:10px;margin-bottom:10px;">';
                 html += '<div style="font-weight:900;font-size:16px;margin-bottom:6px;">Damage</div>';
-                html += mini("Set damage", "!mech trapdamage " + sourceId + " ?{Damage roll|1d6}", "Set damage roll");
+                html += mini("Set damage", "!mech effectdamage " + sourceId + " ?{Damage roll|1d6}", "Set damage roll");
                 html += '<div style="margin-top:8px;font-weight:900;">Damage: <span style="color:#333;">' + esc(trap.damage) + "</span></div>";
                 html += "</div>";
             }
@@ -1588,14 +1767,14 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
             if (trap.type === "save") {
                 html += '<div style="border:2px solid #111;border-radius:10px;padding:10px;margin-bottom:10px;">';
                 html += '<div style="font-weight:900;font-size:16px;margin-bottom:6px;">Save</div>';
-                html += mini("Set label", "!mech trapsavelabel " + sourceId + " ?{Save label|DEX}", "Set save label");
-                html += mini("Set DC", "!mech trapsavedc " + sourceId + " ?{Save DC|12}", "Set save DC");
-                html += mini("Set success text", "!mech trapsavesuccessmsg " + sourceId + " ?{Success text|}", "Set success text");
-                html += mini("Set fail text", "!mech trapsavefailmsg " + sourceId + " ?{Fail text|}", "Set fail text");
-                html += mini("Success HALF", "!mech trapsavesuccess " + sourceId + " half", "Success takes half damage");
-                html += mini("Success NONE", "!mech trapsavesuccess " + sourceId + " none", "Success takes no damage");
-                html += mini("Set dmg type", "!mech trapsavedmgtype " + sourceId + " ?{Damage type|piercing|slashing|bludgeoning|acid|cold|fire|force|lightning|necrotic|poison|psychic|radiant|thunder}", "Set damage type");
-                html += mini("Set fail damage", "!mech trapsavefaildmg " + sourceId + " ?{Fail damage|1d6}", "Set fail damage");
+                html += mini("Set label", "!mech effectsavelabel " + sourceId + " ?{Save label|DEX}", "Set save label");
+                html += mini("Set DC", "!mech effectsavedc " + sourceId + " ?{Save DC|12}", "Set save DC");
+                html += mini("Set success text", "!mech effectsavesuccessmsg " + sourceId + " ?{Success text|}", "Set success text");
+                html += mini("Set fail text", "!mech effectsavefailmsg " + sourceId + " ?{Fail text|}", "Set fail text");
+                html += mini("Success HALF", "!mech effectsavesuccess " + sourceId + " half", "Success takes half damage");
+                html += mini("Success NONE", "!mech effectsavesuccess " + sourceId + " none", "Success takes no damage");
+                html += mini("Set dmg type", "!mech effectsavedmgtype " + sourceId + " ?{Damage type|piercing|slashing|bludgeoning|acid|cold|fire|force|lightning|necrotic|poison|psychic|radiant|thunder}", "Set damage type");
+                html += mini("Set fail damage", "!mech effectsavefaildmg " + sourceId + " ?{Fail damage|1d6}", "Set fail damage");
                 html += '<div style="margin-top:8px;font-weight:900;">Save: <span style="color:#333;">' + esc(String(trap.save.label).toUpperCase()) + " DC " + esc(String(trap.save.dc)) + "</span></div>";
                 html += '<div style="margin-top:4px;font-weight:900;">Success result: <span style="color:#333;">' + esc(String(trap.save.successMode || "none").toUpperCase()) + "</span></div>";
                 html += '<div style="margin-top:4px;font-weight:900;">Damage type: <span style="color:#333;">' + esc(String(trap.save.damageType || "").trim() || "(none)") + "</span></div>";
@@ -1606,8 +1785,8 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
             if (trap.type === "status") {
                 html += '<div style="border:2px solid #111;border-radius:10px;padding:10px;margin-bottom:10px;">';
                 html += '<div style="font-weight:900;font-size:16px;margin-bottom:6px;">Status</div>';
-                html += mini("Set markers", "!mech trapstatusmarkers " + sourceId + " ?{Markers (comma-separated)|cobweb}", "Set markers");
-                html += mini(trap.status.clearOnRelease ? "Clear on release: ON" : "Clear on release: OFF", "!mech trapstatusclear " + sourceId, "Toggle clear on release");
+                html += mini("Set markers", "!mech effectstatusmarkers " + sourceId + " ?{Markers (comma-separated)|cobweb}", "Set markers");
+                html += mini(trap.status.clearOnRelease ? "Clear on release: ON" : "Clear on release: OFF", "!mech effectstatusclear " + sourceId, "Toggle clear on release");
                 html += '<div style="margin-top:8px;font-weight:900;">Markers: <span style="color:#333;">' + esc(describeStatusMarkers(trap)) + "</span></div>";
                 html += "</div>";
             }
@@ -1615,8 +1794,8 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
             if (trap.type === "teleport") {
                 html += '<div style="border:2px solid #111;border-radius:10px;padding:10px;margin-bottom:10px;">';
                 html += '<div style="font-weight:900;font-size:16px;margin-bottom:6px;">Teleport</div>';
-                html += mini("Set destination", "!mech trapsetteleport " + sourceId, "Set destination from selection");
-                html += mini("Clear destination", "!mech trapclearteleport " + sourceId, "Clear destination");
+                html += mini("Set destination", "!mech effectsetteleport " + sourceId, "Set destination from selection");
+                html += mini("Clear destination", "!mech effectclearteleport " + sourceId, "Clear destination");
                 html += '<div style="margin-top:8px;font-weight:900;">Destination: <span style="color:#333;">' + esc(describeTeleportDestination(trap)) + "</span></div>";
                 html += "</div>";
             }
@@ -1625,12 +1804,12 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
                 html += '<div style="border:2px solid #111;border-radius:10px;padding:10px;margin-bottom:10px;">';
                 html += '<div style="font-weight:900;font-size:16px;margin-bottom:6px;">Effect Targets</div>';
                 if (trap.type === "reveal") {
-                    html += mini("Set reveal targets", "!mech trapsetreveal " + sourceId, "Set reveal targets from selection");
-                    html += mini("Clear reveal targets", "!mech trapclearreveal " + sourceId, "Clear reveal targets");
+                    html += mini("Set reveal targets", "!mech effectsetreveal " + sourceId, "Set reveal targets from selection");
+                    html += mini("Clear reveal targets", "!mech effectclearreveal " + sourceId, "Clear reveal targets");
                     html += '<div style="margin-top:8px;font-weight:900;">Reveal targets: <span style="color:#333;">' + esc(describeRevealTargets(trap)) + "</span></div>";
                 } else {
-                    html += mini("Set spawn targets", "!mech trapsetspawn " + sourceId, "Set spawn targets from selection");
-                    html += mini("Clear spawn targets", "!mech trapclearspawn " + sourceId, "Clear spawn targets");
+                    html += mini("Set spawn targets", "!mech effectsetspawn " + sourceId, "Set spawn targets from selection");
+                    html += mini("Clear spawn targets", "!mech effectclearspawn " + sourceId, "Clear spawn targets");
                     html += '<div style="margin-top:8px;font-weight:900;">Spawn targets: <span style="color:#333;">' + esc(describeSpawnTargets(trap)) + "</span></div>";
                 }
                 html += "</div>";
@@ -1638,12 +1817,12 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
 
             html += '<div style="border:2px solid #111;border-radius:10px;padding:10px;margin-bottom:10px;background:#fafafa;">';
             html += '<div style="font-weight:900;font-size:16px;margin-bottom:6px;">Extra Effects</div>';
-            if (trap.type !== "reveal") html += mini(trap.effects.revealAlso ? "Reveal targets: ON" : "Reveal targets: OFF", "!mech traprevealtoggle " + sourceId, "Toggle reveal effect");
-            html += mini("Set reveal targets", "!mech trapsetreveal " + sourceId, "Set reveal targets");
-            html += mini("Clear reveal targets", "!mech trapclearreveal " + sourceId, "Clear reveal targets");
-            html += mini(trap.effects.lockToken ? "Lock token: ON" : "Lock token: OFF", "!mech traplocktoggle " + sourceId, "Toggle lock token effect");
-            html += mini("Set lock marker", "!mech traplockmarker " + sourceId + " ?{Lock marker|fishing-net}", "Set lock marker");
-            html += mini("Unlock tokens", "!mech trapunlock " + sourceId, "Unlock affected tokens");
+            if (trap.type !== "reveal") html += mini(trap.effects.revealAlso ? "Reveal targets: ON" : "Reveal targets: OFF", "!mech effectrevealtoggle " + sourceId, "Toggle reveal effect");
+            html += mini("Set reveal targets", "!mech effectsetreveal " + sourceId, "Set reveal targets");
+            html += mini("Clear reveal targets", "!mech effectclearreveal " + sourceId, "Clear reveal targets");
+            html += mini(trap.effects.lockToken ? "Lock token: ON" : "Lock token: OFF", "!mech effectlocktoggle " + sourceId, "Toggle lock token effect");
+            html += mini("Set lock marker", "!mech effectlockmarker " + sourceId + " ?{Lock marker|fishing-net}", "Set lock marker");
+            html += mini("Unlock tokens", "!mech effectunlock " + sourceId, "Unlock affected tokens");
             html += '<div style="margin-top:8px;font-weight:900;">Reveal targets: <span style="color:#333;">' + esc(describeRevealTargets(trap)) + "</span></div>";
             html += '<div style="margin-top:4px;font-weight:900;">Lock effect: <span style="color:#333;">' + esc(trap.effects.lockToken ? "ON" : "OFF") + "</span></div>";
             html += '<div style="margin-top:4px;font-weight:900;">Lock marker: <span style="color:#333;">' + esc(String(trap.effects.lockMarker || "").trim() || "(none)") + "</span></div>";
@@ -1879,8 +2058,7 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
     function mechanismIsActive(mech) {
         if (!mech) return false;
         if (mech.kind === "single") {
-            var plate = getObj("graphic", mech.sources[0]);
-            return !!plate && isSourceOccupied(plate);
+            return singleMechanismState(mech).active;
         }
         if (mech.locks.mechanismLocked) return false;
         var required = mechanismRequiredCount(mech);
@@ -1890,22 +2068,21 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
     function mechanismRuleSummary(mech) {
         if (!mech) return "";
         if (mech.kind === "single") {
-            var timing = mech.effects.trap ? trapTriggerLabel(mech.rule.timing) : "Occupancy";
-            return "1 source / " + timing;
+            return sourceKindLabel(mech.sourceKind) + " / " + primaryEffectTriggerLabel(mech.rule.timing);
         }
 
         var required = mechanismRequiredCount(mech);
-        return required + " of " + mech.sources.length + " / " + trapTriggerLabel(mech.rule.timing);
+        return required + " of " + mech.sources.length + " / " + primaryEffectTriggerLabel(mech.rule.timing);
     }
 
     function mechanismEffectSummary(mech) {
         var parts = [];
         var doorCount = Object.keys(mech.effects.doors || {}).length;
-        var trap = mech.effects.trap;
+        var trap = mech.effects.primary;
         var trapEnabled = trap && trap.enabled && trap.type !== "none";
 
         if (doorCount) parts.push(doorCount + " door" + (doorCount === 1 ? "" : "s"));
-        if (trapEnabled) parts.push(trapTypeLabel(trap.type));
+        if (trapEnabled) parts.push(primaryEffectTypeLabel(trap.type));
 
         return parts.length ? parts.join(" + ") : "(no effects)";
     }
@@ -1928,7 +2105,7 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         var mechs = [];
         var mechId;
 
-        syncAllMechanisms();
+        pruneAllMechanisms();
         for (mechId in st.mechanisms) {
             if (!st.mechanisms.hasOwnProperty(mechId)) continue;
             if (!mechanismVisibleOnPage(st.mechanisms[mechId], pageId)) continue;
@@ -1951,7 +2128,10 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         // global controls
         html += '<div style="border:2px solid #111;border-radius:10px;padding:10px;margin-bottom:10px;">';
         html += '<div style="font-weight:900;font-size:16px;margin-bottom:6px;">Controls</div>';
-        html += iconBtn("🧱", "!mech make ?{Trigger name|Pressure_Plate}", "Create single-source mechanism from selected trigger");
+        html += iconBtn("🧱", "!mech make ?{Trigger name|Pressure_Plate} pressurePlate", "Create pressure plate from selected trigger");
+        html += iconBtn("🪤", "!mech make ?{Trigger name|Tripwire} tripwire", "Create tripwire from selected trigger");
+        html += iconBtn("📡", "!mech make ?{Trigger name|Proximity_Zone} proximity", "Create proximity trigger from selected token");
+        html += iconBtn("🎛️", "!mech make ?{Trigger name|Manual_Trigger} manual", "Create manual trigger from selected token");
         html += iconBtn("🧭", "!mech setpage", "Use Current Page (Set)");
         html += iconBtn("🔄", "!mech ui", "Refresh UI");
         html += iconBtn("✅", "!mech check", "Force check all mechanisms");
@@ -1983,7 +2163,7 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
             var active = mechanismIsActive(mech);
             var required = mechanismRequiredCount(mech);
             var pressed = countActiveMechanismSources(mech);
-            var trap = mech.effects.trap || defaultTrapConfig();
+            var trap = mech.effects.primary || defaultPrimaryEffectConfig();
             var trapEnabled = trap.enabled && trap.type !== "none";
             var overrideActive = mech.kind === "group" && hasMechanismEditOverride(mech.legacyId);
             var editBlocked = mech.kind === "group" && mech.locks.configLocked && !overrideActive;
@@ -1995,7 +2175,7 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
             html += '<span style="font-weight:900;font-size:18px;">' + esc(name) + "</span>" +
                 badge(active ? "ACTIVE" : "INACTIVE", active);
             html += badge(mech.kind === "single" ? "SINGLE" : "MULTI", false);
-            if (trapEnabled) html += badge("TRAP", false);
+            if (trapEnabled) html += badge("EFFECT", false);
             if (mech.kind === "group" && mech.locks.mechanismLocked) html += badge(lockText, false);
             if (mech.kind === "group" && mech.locks.configLocked) html += badge("CONFIG", false);
             if (overrideActive) html += badge("OVERRIDE", true);
@@ -2014,6 +2194,9 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
             html += '<div style="margin-top:6px;font-weight:900;">rule: <span style="font-weight:900;color:#333;">' + esc(mechanismRuleSummary(mech)) + "</span></div>";
             html += '<div style="margin-top:6px;font-weight:900;">effects: <span style="font-weight:900;color:#333;">' + esc(mechanismEffectSummary(mech)) + "</span></div>";
             html += '<div style="margin-top:6px;font-weight:900;">sources: <span style="font-weight:900;color:#333;">' + esc(String(mech.sources.length)) + "</span></div>";
+            if (mech.kind === "single") {
+                html += '<div style="margin-top:6px;font-weight:900;">trigger: <span style="font-weight:900;color:#333;">' + esc(sourceKindLabel(mech.sourceKind)) + "</span></div>";
+            }
 
             if (mech.kind === "group") {
                 html += '<div style="margin-top:6px;font-weight:900;">status: <span style="font-weight:900;color:#333;">' + esc(String(pressed)) + "/" + esc(String(required)) + " pressed</span></div>";
@@ -2033,10 +2216,12 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
                 var src = getObj("graphic", mech.sources[s]);
                 if (!src || src.get("_pageid") !== pageId) continue;
                 anySourceListed = true;
-                var srcOcc = isSourceOccupied(src);
+                var srcState = sourceMechanismStateById(src.id);
+                var srcMech = getSingleMechanism(src.id);
                 var srcName = src.get("name") || ("Trigger …" + shortId(src.id));
                 html += '<div style="margin-left:12px;margin-top:6px;font-weight:900;">' +
-                    esc(srcName) + badge(srcOcc ? "DOWN" : "UP", srcOcc) +
+                    esc(srcName) + ' <span style="color:#666;">(' + esc(sourceKindLabel(srcMech.sourceKind)) + ')</span>' +
+                    badge(srcState.active ? "ACTIVE" : "INACTIVE", srcState.active) +
                     mini("Ping", "!mech ping " + src.id, "Ping this trigger");
                 if (mech.kind === "group") {
                     if (editBlocked) html += miniDisabled("Remove", "Config locked");
@@ -2083,13 +2268,14 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
     function showCommandHelp() {
         whisper(
             "Commands:<br>" +
-            "<code>!mech ui</code>, <code>!mech edit REF</code>, <code>!mech setpage</code>, <code>!mech make NAME</code>, <code>!mech add lock|secret</code>, <code>!mech check</code>, <code>!mech ping SOURCEID</code><br>" +
-            "Single-Source Effects:<br><code>!mech trapui SOURCEID</code> (alias for edit), <code>!mech traptoggle SOURCEID</code>, <code>!mech traptype SOURCEID alarm|damage|teleport|reveal|save|status|spawn|none</code><br>" +
-            "<code>!mech traptrigger SOURCEID press|release|both</code>, <code>!mech trapmsg SOURCEID ...</code>, <code>!mech trapdamage SOURCEID XdY</code><br>" +
-            "<code>!mech trapsavelabel SOURCEID LABEL</code>, <code>!mech trapsavedc SOURCEID DC</code>, <code>!mech trapsavesuccessmsg SOURCEID ...</code>, <code>!mech trapsavefailmsg SOURCEID ...</code><br>" +
-            "<code>!mech trapsavesuccess SOURCEID half|none</code>, <code>!mech trapsavedmgtype SOURCEID TYPE</code>, <code>!mech trapsavefaildmg SOURCEID XdY</code>, <code>!mech trapstatusmarkers SOURCEID marker1,marker2</code>, <code>!mech trapstatusclear SOURCEID</code><br>" +
-            "<code>!mech trapsetteleport SOURCEID</code>, <code>!mech trapclearteleport SOURCEID</code>, <code>!mech trapsetreveal SOURCEID</code>, <code>!mech trapclearreveal SOURCEID</code>, <code>!mech traprevealtoggle SOURCEID</code><br>" +
-            "<code>!mech trapsetspawn SOURCEID</code>, <code>!mech trapclearspawn SOURCEID</code>, <code>!mech traplocktoggle SOURCEID</code>, <code>!mech traplockmarker SOURCEID MARKER</code>, <code>!mech trapunlock SOURCEID</code><br>" +
+            "<code>!mech ui</code>, <code>!mech edit REF</code>, <code>!mech setpage</code>, <code>!mech make NAME [pressurePlate|tripwire|proximity|manual]</code>, <code>!mech add lock|secret</code>, <code>!mech check</code>, <code>!mech ping SOURCEID</code><br>" +
+            "Single-Source Triggers:<br><code>!mech sourcetype SOURCEID pressurePlate|tripwire|proximity|manual</code>, <code>!mech proximityrange SOURCEID CELLS</code>, <code>!mech manualon SOURCEID</code>, <code>!mech manualoff SOURCEID</code>, <code>!mech manualtoggle SOURCEID</code><br>" +
+            "Single-Source Effects:<br><code>!mech effectui SOURCEID</code> (alias for edit), <code>!mech effecttoggle SOURCEID</code>, <code>!mech effecttype SOURCEID alarm|damage|teleport|reveal|save|status|spawn|none</code><br>" +
+            "<code>!mech effecttrigger SOURCEID press|release|both</code>, <code>!mech effectmsg SOURCEID ...</code>, <code>!mech effectdamage SOURCEID XdY</code><br>" +
+            "<code>!mech effectsavelabel SOURCEID LABEL</code>, <code>!mech effectsavedc SOURCEID DC</code>, <code>!mech effectsavesuccessmsg SOURCEID ...</code>, <code>!mech effectsavefailmsg SOURCEID ...</code><br>" +
+            "<code>!mech effectsavesuccess SOURCEID half|none</code>, <code>!mech effectsavedmgtype SOURCEID TYPE</code>, <code>!mech effectsavefaildmg SOURCEID XdY</code>, <code>!mech effectstatusmarkers SOURCEID marker1,marker2</code>, <code>!mech effectstatusclear SOURCEID</code><br>" +
+            "<code>!mech effectsetteleport SOURCEID</code>, <code>!mech effectclearteleport SOURCEID</code>, <code>!mech effectsetreveal SOURCEID</code>, <code>!mech effectclearreveal SOURCEID</code>, <code>!mech effectrevealtoggle SOURCEID</code><br>" +
+            "<code>!mech effectsetspawn SOURCEID</code>, <code>!mech effectclearspawn SOURCEID</code>, <code>!mech effectlocktoggle SOURCEID</code>, <code>!mech effectlockmarker SOURCEID MARKER</code>, <code>!mech effectunlock SOURCEID</code><br>" +
             "Messages:<br><code>!mech platemsgon SOURCEID ...</code>, <code>!mech platemsgoff SOURCEID ...</code><br>" +
             "Multi-Source Mechanisms:<br>" +
             "<code>!mech grouplock NAME</code> (mechanism lock), <code>!mech groupcfglock NAME</code> (config lock), <code>!mech groupoverride NAME</code> (60s override)<br>" +
@@ -2119,7 +2305,7 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
 
     function handleSingleCommands(msg, sub, a, b, restFrom) {
         if (sub === "make") {
-            cmdMakePlateFromSelected(msg, a);
+            cmdMakePlateFromSelected(msg, a, b);
             return true;
         }
         if (sub === "add") {
@@ -2170,132 +2356,159 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
             if (a) cmdPingSource(msg.playerid, a);
             return true;
         }
+        if (sub === "sourcetype") {
+            if (a) cmdSetSingleSourceKind(a, b);
+            evaluateAll();
+            renderUI(msg.playerid);
+            return true;
+        }
+        if (sub === "proximityrange") {
+            if (a) cmdSetProximityRange(a, b);
+            evaluateAll();
+            renderUI(msg.playerid);
+            return true;
+        }
+        if (sub === "manualon") {
+            if (a) cmdSetManualState(a, true);
+            renderUI(msg.playerid);
+            return true;
+        }
+        if (sub === "manualoff") {
+            if (a) cmdSetManualState(a, false);
+            renderUI(msg.playerid);
+            return true;
+        }
+        if (sub === "manualtoggle") {
+            if (a) cmdToggleManualState(a);
+            renderUI(msg.playerid);
+            return true;
+        }
         return false;
     }
 
-    function handleTrapCommands(msg, sub, a, b, restFrom) {
-        if (sub === "trapui") {
-            if (a) renderTrapUI(msg.playerid, a);
+    function handleEffectCommands(msg, sub, a, b, restFrom) {
+        if (sub === "effectui") {
+            if (a) renderEffectUI(msg.playerid, a);
             return true;
         }
-        if (sub === "traptoggle") {
-            if (a) cmdTrapToggle(a);
-            renderTrapUI(msg.playerid, a);
+        if (sub === "effecttoggle") {
+            if (a) cmdEffectToggle(a);
+            renderEffectUI(msg.playerid, a);
             return true;
         }
-        if (sub === "traptype") {
-            if (a) cmdTrapType(a, b);
-            renderTrapUI(msg.playerid, a);
+        if (sub === "effecttype") {
+            if (a) cmdEffectType(a, b);
+            renderEffectUI(msg.playerid, a);
             return true;
         }
-        if (sub === "traptrigger") {
-            if (a) cmdTrapTrigger(a, b);
-            renderTrapUI(msg.playerid, a);
+        if (sub === "effecttrigger") {
+            if (a) cmdEffectTrigger(a, b);
+            renderEffectUI(msg.playerid, a);
             return true;
         }
-        if (sub === "trapmsg") {
-            if (a) cmdTrapMessage(a, restFrom(3));
-            renderTrapUI(msg.playerid, a);
+        if (sub === "effectmsg") {
+            if (a) cmdEffectMessage(a, restFrom(3));
+            renderEffectUI(msg.playerid, a);
             return true;
         }
-        if (sub === "trapdamage") {
-            if (a) cmdTrapDamage(a, restFrom(3));
-            renderTrapUI(msg.playerid, a);
+        if (sub === "effectdamage") {
+            if (a) cmdEffectDamage(a, restFrom(3));
+            renderEffectUI(msg.playerid, a);
             return true;
         }
-        if (sub === "trapsavelabel") {
-            if (a) cmdTrapSaveLabel(a, restFrom(3));
-            renderTrapUI(msg.playerid, a);
+        if (sub === "effectsavelabel") {
+            if (a) cmdEffectSaveLabel(a, restFrom(3));
+            renderEffectUI(msg.playerid, a);
             return true;
         }
-        if (sub === "trapsavedc") {
-            if (a) cmdTrapSaveDc(a, b);
-            renderTrapUI(msg.playerid, a);
+        if (sub === "effectsavedc") {
+            if (a) cmdEffectSaveDc(a, b);
+            renderEffectUI(msg.playerid, a);
             return true;
         }
-        if (sub === "trapsavesuccessmsg") {
-            if (a) cmdTrapSaveSuccessMsg(a, restFrom(3));
-            renderTrapUI(msg.playerid, a);
+        if (sub === "effectsavesuccessmsg") {
+            if (a) cmdEffectSaveSuccessMsg(a, restFrom(3));
+            renderEffectUI(msg.playerid, a);
             return true;
         }
-        if (sub === "trapsavefailmsg") {
-            if (a) cmdTrapSaveFailMsg(a, restFrom(3));
-            renderTrapUI(msg.playerid, a);
+        if (sub === "effectsavefailmsg") {
+            if (a) cmdEffectSaveFailMsg(a, restFrom(3));
+            renderEffectUI(msg.playerid, a);
             return true;
         }
-        if (sub === "trapsavesuccess") {
-            if (a) cmdTrapSaveSuccessMode(a, b);
-            renderTrapUI(msg.playerid, a);
+        if (sub === "effectsavesuccess") {
+            if (a) cmdEffectSaveSuccessMode(a, b);
+            renderEffectUI(msg.playerid, a);
             return true;
         }
-        if (sub === "trapsavedmgtype") {
-            if (a) cmdTrapSaveDamageType(a, restFrom(3));
-            renderTrapUI(msg.playerid, a);
+        if (sub === "effectsavedmgtype") {
+            if (a) cmdEffectSaveDamageType(a, restFrom(3));
+            renderEffectUI(msg.playerid, a);
             return true;
         }
-        if (sub === "trapsavefaildmg") {
-            if (a) cmdTrapSaveFailDamage(a, restFrom(3));
-            renderTrapUI(msg.playerid, a);
+        if (sub === "effectsavefaildmg") {
+            if (a) cmdEffectSaveFailDamage(a, restFrom(3));
+            renderEffectUI(msg.playerid, a);
             return true;
         }
-        if (sub === "trapstatusmarkers") {
-            if (a) cmdTrapStatusMarkers(a, restFrom(3));
-            renderTrapUI(msg.playerid, a);
+        if (sub === "effectstatusmarkers") {
+            if (a) cmdEffectStatusMarkers(a, restFrom(3));
+            renderEffectUI(msg.playerid, a);
             return true;
         }
-        if (sub === "trapstatusclear") {
-            if (a) cmdTrapStatusClearToggle(a);
-            renderTrapUI(msg.playerid, a);
+        if (sub === "effectstatusclear") {
+            if (a) cmdEffectStatusClearToggle(a);
+            renderEffectUI(msg.playerid, a);
             return true;
         }
-        if (sub === "trapsetteleport") {
-            if (a) cmdTrapSetTeleport(msg, a);
-            renderTrapUI(msg.playerid, a);
+        if (sub === "effectsetteleport") {
+            if (a) cmdEffectSetTeleport(msg, a);
+            renderEffectUI(msg.playerid, a);
             return true;
         }
-        if (sub === "trapclearteleport") {
-            if (a) cmdTrapClearTeleport(a);
-            renderTrapUI(msg.playerid, a);
+        if (sub === "effectclearteleport") {
+            if (a) cmdEffectClearTeleport(a);
+            renderEffectUI(msg.playerid, a);
             return true;
         }
-        if (sub === "trapsetreveal") {
-            if (a) cmdTrapSetReveal(msg, a);
-            renderTrapUI(msg.playerid, a);
+        if (sub === "effectsetreveal") {
+            if (a) cmdEffectSetReveal(msg, a);
+            renderEffectUI(msg.playerid, a);
             return true;
         }
-        if (sub === "trapclearreveal") {
-            if (a) cmdTrapClearReveal(a);
-            renderTrapUI(msg.playerid, a);
+        if (sub === "effectclearreveal") {
+            if (a) cmdEffectClearReveal(a);
+            renderEffectUI(msg.playerid, a);
             return true;
         }
-        if (sub === "traprevealtoggle") {
-            if (a) cmdTrapRevealToggle(a);
-            renderTrapUI(msg.playerid, a);
+        if (sub === "effectrevealtoggle") {
+            if (a) cmdEffectRevealToggle(a);
+            renderEffectUI(msg.playerid, a);
             return true;
         }
-        if (sub === "trapsetspawn") {
-            if (a) cmdTrapSetSpawn(msg, a);
-            renderTrapUI(msg.playerid, a);
+        if (sub === "effectsetspawn") {
+            if (a) cmdEffectSetSpawn(msg, a);
+            renderEffectUI(msg.playerid, a);
             return true;
         }
-        if (sub === "trapclearspawn") {
-            if (a) cmdTrapClearSpawn(a);
-            renderTrapUI(msg.playerid, a);
+        if (sub === "effectclearspawn") {
+            if (a) cmdEffectClearSpawn(a);
+            renderEffectUI(msg.playerid, a);
             return true;
         }
-        if (sub === "traplocktoggle") {
-            if (a) cmdTrapLockToggle(a);
-            renderTrapUI(msg.playerid, a);
+        if (sub === "effectlocktoggle") {
+            if (a) cmdEffectLockToggle(a);
+            renderEffectUI(msg.playerid, a);
             return true;
         }
-        if (sub === "traplockmarker") {
-            if (a) cmdTrapLockMarker(a, restFrom(3));
-            renderTrapUI(msg.playerid, a);
+        if (sub === "effectlockmarker") {
+            if (a) cmdEffectLockMarker(a, restFrom(3));
+            renderEffectUI(msg.playerid, a);
             return true;
         }
-        if (sub === "trapunlock") {
-            if (a) cmdTrapUnlock(a);
-            renderTrapUI(msg.playerid, a);
+        if (sub === "effectunlock") {
+            if (a) cmdEffectUnlock(a);
+            renderEffectUI(msg.playerid, a);
             return true;
         }
         return false;
@@ -2450,7 +2663,7 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
 
         if (handleUiCommands(msg, sub)) return;
         if (handleSingleCommands(msg, sub, a, b, restFrom)) return;
-        if (handleTrapCommands(msg, sub, a, b, restFrom)) return;
+        if (handleEffectCommands(msg, sub, a, b, restFrom)) return;
         if (handleGroupCommands(msg, sub, a, b, restFrom)) return;
 
         showCommandHelp();
