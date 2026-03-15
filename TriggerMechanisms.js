@@ -118,17 +118,6 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         return trap;
     }
 
-    function newSingleConfigData() {
-        return {
-            doors: {},
-            msgOn: "",
-            msgOff: "",
-            lastActive: false,
-            lastOccupants: [],
-            trap: defaultTrapConfig()
-        };
-    }
-
     function newMechanismData(id) {
         return {
             id: id,
@@ -145,7 +134,7 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
             },
             effects: {
                 doors: {},
-                trap: null
+                trap: defaultTrapConfig()
             },
             messages: {
                 on: "",
@@ -168,8 +157,6 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
     /* ---------- state ---------- */
     function ensureState() {
         state[STATE] = state[STATE] || {
-            plates: {},        // legacy single-source config store
-            groups: {},        // legacy multi-source config store
             mechanisms: {},    // mechanismId -> normalized internal model for all mechanisms
             uiPageId: null,
             last: 0,
@@ -178,67 +165,17 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         };
 
         var st = state[STATE];
-
-        // backfill plates
-        for (var pid in st.plates) {
-            if (!st.plates.hasOwnProperty(pid)) continue;
-            var p = st.plates[pid];
-            if (!p) continue;
-            if (!p.doors) p.doors = {};
-            if (typeof p.msgOn === "undefined") p.msgOn = "";
-            if (typeof p.msgOff === "undefined") p.msgOff = "";
-            if (typeof p.lastActive === "undefined") p.lastActive = false;
-            if (!p.lastOccupants) p.lastOccupants = [];
-            p.trap = backfillTrapConfig(p.trap);
-        }
-
-        // backfill groups
-        for (var gname in st.groups) {
-            if (!st.groups.hasOwnProperty(gname)) continue;
-            var g = st.groups[gname];
-            if (!g) continue;
-
-            if (!g.doors) g.doors = {};
-            if (!g.plates) g.plates = [];
-            if (typeof g.required === "undefined") g.required = 0;
-
-            // trigger lock
-            if (typeof g.locked === "undefined") g.locked = false;
-            if (typeof g.lockFreeze === "undefined") g.lockFreeze = false;
-
-            // config lock
-            if (typeof g.cfgLocked === "undefined") g.cfgLocked = false;
-
-            // auto-lock
-            if (typeof g.autoLock === "undefined") g.autoLock = false;
-            if (typeof g.hasTriggered === "undefined") g.hasTriggered = false;
-
-            // messages
-            if (typeof g.msgOn === "undefined") g.msgOn = "";
-            if (typeof g.msgOff === "undefined") g.msgOff = "";
-            if (typeof g.lastActive === "undefined") g.lastActive = false;
-        }
+        var mechId;
 
         if (!st.mechanisms) st.mechanisms = {};
+        for (mechId in st.mechanisms) {
+            if (!st.mechanisms.hasOwnProperty(mechId)) continue;
+            backfillMechanismData(st.mechanisms[mechId]);
+        }
         if (!st.editOverride) st.editOverride = {};
         if (!st.lockedTokens) st.lockedTokens = {};
 
         return st;
-    }
-
-    function ensureSingleConfigData(plateId) {
-        var st = ensureState();
-        st.plates[plateId] = st.plates[plateId] || newSingleConfigData();
-
-        var p = st.plates[plateId];
-        if (!p.doors) p.doors = {};
-        if (typeof p.msgOn === "undefined") p.msgOn = "";
-        if (typeof p.msgOff === "undefined") p.msgOff = "";
-        if (typeof p.lastActive === "undefined") p.lastActive = false;
-        if (!p.lastOccupants) p.lastOccupants = [];
-        p.trap = backfillTrapConfig(p.trap);
-
-        return p;
     }
 
     function singleMechanismId(plateId) {
@@ -262,6 +199,7 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
     function ensureMechanismData(mechId) {
         var st = ensureState();
         st.mechanisms[mechId] = st.mechanisms[mechId] || newMechanismData(mechId);
+        backfillMechanismData(st.mechanisms[mechId]);
         return st.mechanisms[mechId];
     }
 
@@ -273,93 +211,86 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         return "";
     }
 
-    function syncSingleMechanismFromLegacy(plateId) {
-        var plate = getObj("graphic", plateId);
-        var pdata = ensureSingleConfigData(plateId);
-        var mechId = singleMechanismId(plateId);
-        var mech = ensureMechanismData(mechId);
-
-        mech.kind = "single";
-        mech.legacyId = plateId;
-        mech.sourceKind = "pressurePlate";
-        mech.name = (plate && plate.get("name")) || ("Trigger …" + shortId(plateId));
-        mech.pageId = plate ? plate.get("_pageid") : "";
-        mech.sources = [plateId];
-        mech.rule.mode = "single";
-        mech.rule.k = 1;
-        mech.rule.timing = pdata.trap.trigger || "press";
-        mech.effects.doors = cloneDoorModes(pdata.doors);
-        mech.effects.trap = pdata.trap;
-        mech.messages.on = pdata.msgOn || "";
-        mech.messages.off = pdata.msgOff || "";
-        mech.locks.mechanismLocked = false;
-        mech.locks.freezeWhenLocked = false;
-        mech.locks.configLocked = false;
-        mech.locks.autoLock = false;
-        mech.locks.hasTriggered = false;
-        mech.runtime.lastActive = !!pdata.lastActive;
-        mech.runtime.lastOccupants = (pdata.lastOccupants || []).slice();
-
+    function backfillMechanismData(mech) {
+        mech = mech || {};
+        if (typeof mech.kind === "undefined") mech.kind = "single";
+        if (typeof mech.legacyId === "undefined") mech.legacyId = "";
+        if (typeof mech.sourceKind === "undefined") mech.sourceKind = "pressurePlate";
+        if (typeof mech.name === "undefined") mech.name = "";
+        if (typeof mech.pageId === "undefined") mech.pageId = "";
+        if (!mech.sources) mech.sources = [];
+        mech.rule = mech.rule || {};
+        if (typeof mech.rule.mode === "undefined") mech.rule.mode = mech.kind === "single" ? "single" : "kofn";
+        if (typeof mech.rule.k === "undefined") mech.rule.k = mech.kind === "single" ? 1 : mech.sources.length;
+        if (typeof mech.rule.timing === "undefined") mech.rule.timing = "press";
+        mech.effects = mech.effects || {};
+        if (!mech.effects.doors) mech.effects.doors = {};
+        if (mech.kind === "single" || mech.effects.trap) mech.effects.trap = backfillTrapConfig(mech.effects.trap);
+        else mech.effects.trap = null;
+        mech.messages = mech.messages || {};
+        if (typeof mech.messages.on === "undefined") mech.messages.on = "";
+        if (typeof mech.messages.off === "undefined") mech.messages.off = "";
+        mech.locks = mech.locks || {};
+        if (typeof mech.locks.mechanismLocked === "undefined") mech.locks.mechanismLocked = false;
+        if (typeof mech.locks.freezeWhenLocked === "undefined") mech.locks.freezeWhenLocked = false;
+        if (typeof mech.locks.configLocked === "undefined") mech.locks.configLocked = false;
+        if (typeof mech.locks.autoLock === "undefined") mech.locks.autoLock = false;
+        if (typeof mech.locks.hasTriggered === "undefined") mech.locks.hasTriggered = false;
+        mech.runtime = mech.runtime || {};
+        if (typeof mech.runtime.lastActive === "undefined") mech.runtime.lastActive = false;
+        if (!mech.runtime.lastOccupants) mech.runtime.lastOccupants = [];
         return mech;
     }
 
-    function syncMultiMechanismFromLegacy(mechanismName) {
-        var st = ensureState();
-        var g = st.groups[mechanismName];
-        if (!g) return null;
-
-        var mechId = multiMechanismId(mechanismName);
+    function getSingleMechanism(plateId) {
+        var mechId = singleMechanismId(plateId);
+        var plate = getObj("graphic", plateId);
         var mech = ensureMechanismData(mechId);
-        var mode = (parseInt(g.required, 10) === 0) ? "all" : "kofn";
+        backfillMechanismData(mech);
+        mech.kind = "single";
+        mech.legacyId = plateId;
+        mech.sourceKind = "pressurePlate";
+        mech.name = (plate && plate.get("name")) || mech.name || ("Trigger …" + shortId(plateId));
+        mech.pageId = plate ? plate.get("_pageid") : mech.pageId;
+        mech.sources = [plateId];
+        mech.rule.mode = "single";
+        mech.rule.k = 1;
+        mech.effects.trap = backfillTrapConfig(mech.effects.trap);
+        return mech;
+    }
 
+    function getMultiMechanism(mechanismName, createMissing) {
+        var mechId = multiMechanismId(mechanismName);
+        var st = ensureState();
+        if (!createMissing && !st.mechanisms[mechId]) return null;
+        var mech = ensureMechanismData(mechId);
+        backfillMechanismData(mech);
         mech.kind = "group";
         mech.legacyId = mechanismName;
         mech.sourceKind = "pressurePlate";
         mech.name = mechanismName;
-        mech.pageId = inferMechanismPageId(g.plates || []);
-        mech.sources = (g.plates || []).slice();
-        mech.rule.mode = mode;
-        mech.rule.k = clampRequiredSources(g);
-        mech.rule.timing = "press";
-        mech.effects.doors = cloneDoorModes(g.doors);
+        mech.pageId = inferMechanismPageId(mech.sources || []);
+        if (mech.rule.mode === "single") mech.rule.mode = "kofn";
+        if (mech.rule.k < 0) mech.rule.k = 0;
         mech.effects.trap = null;
-        mech.messages.on = g.msgOn || "";
-        mech.messages.off = g.msgOff || "";
-        mech.locks.mechanismLocked = !!g.locked;
-        mech.locks.freezeWhenLocked = !!g.lockFreeze;
-        mech.locks.configLocked = !!g.cfgLocked;
-        mech.locks.autoLock = !!g.autoLock;
-        mech.locks.hasTriggered = !!g.hasTriggered;
-        mech.runtime.lastActive = !!g.lastActive;
-        mech.runtime.lastOccupants = [];
-
         return mech;
     }
 
-    function syncAllMechanisms() {
+    function pruneAllMechanisms() {
         var st = ensureState();
-        var keep = {};
         var mechId;
-        var gname;
-        var pid;
-
-        for (pid in st.plates) {
-            if (!st.plates.hasOwnProperty(pid)) continue;
-            mechId = singleMechanismId(pid);
-            syncSingleMechanismFromLegacy(pid);
-            keep[mechId] = true;
-        }
-
-        for (gname in st.groups) {
-            if (!st.groups.hasOwnProperty(gname)) continue;
-            mechId = multiMechanismId(gname);
-            syncMultiMechanismFromLegacy(gname);
-            keep[mechId] = true;
-        }
-
         for (mechId in st.mechanisms) {
             if (!st.mechanisms.hasOwnProperty(mechId)) continue;
-            if (!keep[mechId]) delete st.mechanisms[mechId];
+            backfillMechanismData(st.mechanisms[mechId]);
+            if (st.mechanisms[mechId].kind === "single") {
+                if (!getObj("graphic", st.mechanisms[mechId].legacyId)) delete st.mechanisms[mechId];
+                continue;
+            }
+            pruneMechanismSourcesAndDoors({
+                plates: st.mechanisms[mechId].sources,
+                doors: st.mechanisms[mechId].effects.doors
+            });
+            st.mechanisms[mechId].pageId = inferMechanismPageId(st.mechanisms[mechId].sources);
         }
     }
 
@@ -784,43 +715,16 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         }
     }
 
-    function syncLegacyFromMechanism(mech) {
-        var st = ensureState();
-        if (mech.kind === "single") {
-            var pdata = ensureSingleConfigData(mech.legacyId);
-            pdata.doors = cloneDoorModes(mech.effects.doors);
-            pdata.msgOn = mech.messages.on;
-            pdata.msgOff = mech.messages.off;
-            pdata.lastActive = !!mech.runtime.lastActive;
-            pdata.lastOccupants = (mech.runtime.lastOccupants || []).slice();
-            pdata.trap = mech.effects.trap;
-            return;
-        }
-
-        var g = st.groups[mech.legacyId];
-        if (!g) return;
-        g.plates = mech.sources.slice();
-        g.doors = cloneDoorModes(mech.effects.doors);
-        g.required = (mech.rule.mode === "all") ? 0 : mech.rule.k;
-        g.msgOn = mech.messages.on;
-        g.msgOff = mech.messages.off;
-        g.locked = !!mech.locks.mechanismLocked;
-        g.lockFreeze = !!mech.locks.freezeWhenLocked;
-        g.cfgLocked = !!mech.locks.configLocked;
-        g.autoLock = !!mech.locks.autoLock;
-        g.hasTriggered = !!mech.locks.hasTriggered;
-        g.lastActive = !!mech.runtime.lastActive;
-    }
-
     function evaluateMechanism(mech) {
         if (!mech) return;
+        backfillMechanismData(mech);
 
         if (mech.kind === "single") {
-            var plate = getObj("graphic", mech.sources[0]);
-            if (!plate) return;
+            var source = getObj("graphic", mech.sources[0]);
+            if (!source) return;
 
-            var pdata = ensureSingleConfigData(mech.legacyId);
-            var occupants = sourceOccupants(plate);
+            var trap = backfillTrapConfig(mech.effects.trap);
+            var occupants = sourceOccupants(source);
             var prevOccupants = getGraphicsByIds(mech.runtime.lastOccupants);
             var wasActive = !!mech.runtime.lastActive;
             var occ = occupants.length > 0;
@@ -830,21 +734,20 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
 
             applyDoorEffects(mech.effects.doors, occ);
 
-            if (!occ && wasActive && pdata.trap.type === "status" && pdata.trap.status.clearOnRelease && mech.rule.timing === "press") {
-                var clearMarkers = parseMarkerList(pdata.trap.status.markers);
-                var clearTargets = getGraphicsByIds(pdata.trap.status.lastTargets);
+            if (!occ && wasActive && trap.type === "status" && trap.status.clearOnRelease && mech.rule.timing === "press") {
+                var clearMarkers = parseMarkerList(trap.status.markers);
+                var clearTargets = getGraphicsByIds(trap.status.lastTargets);
                 for (var i = 0; i < clearTargets.length; i++) removeMarkersFromToken(clearTargets[i], clearMarkers);
-                pdata.trap.status.lastTargets = [];
+                trap.status.lastTargets = [];
             }
 
-            if (mech.effects.trap && trapFiresOnEdge(mech.rule.timing, wasActive, occ)) {
-                firePlateTrap(plate, { trap: mech.effects.trap }, occ ? occupants : prevOccupants);
+            if (trap && trapFiresOnEdge(mech.rule.timing, wasActive, occ)) {
+                firePlateTrap(source, { trap: trap }, occ ? occupants : prevOccupants);
             }
 
             mech.runtime.lastActive = occ;
             mech.runtime.lastOccupants = [];
             for (i = 0; i < occupants.length; i++) mech.runtime.lastOccupants.push(occupants[i].id);
-            syncLegacyFromMechanism(mech);
             return;
         }
 
@@ -858,7 +761,6 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         if (mech.locks.mechanismLocked) {
             mech.runtime.lastActive = false;
             if (!mech.locks.freezeWhenLocked) applyDoorEffects(mech.effects.doors, false);
-            syncLegacyFromMechanism(mech);
             return;
         }
 
@@ -878,16 +780,14 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
                 mech.locks.mechanismLocked = true;
                 mech.locks.freezeWhenLocked = true;
             }
-            syncLegacyFromMechanism(mech);
             return;
         }
 
         applyDoorEffects(mech.effects.doors, active);
-        syncLegacyFromMechanism(mech);
     }
 
     function evaluateSingleMechanism(plateId) {
-        evaluateMechanism(syncSingleMechanismFromLegacy(plateId));
+        evaluateMechanism(getSingleMechanism(plateId));
     }
 
     /* ---------- evaluation: groups ---------- */
@@ -929,12 +829,12 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
     }
 
     function evaluateMultiSourceMechanism(mechanismName) {
-        evaluateMechanism(syncMultiMechanismFromLegacy(mechanismName));
+        evaluateMechanism(getMultiMechanism(mechanismName, false));
     }
 
     function evaluateAll() {
         var st = ensureState();
-        syncAllMechanisms();
+        pruneAllMechanisms();
 
         for (var mechId in st.mechanisms) {
             if (!st.mechanisms.hasOwnProperty(mechId)) continue;
@@ -982,10 +882,9 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
     }
 
     function requireMechanismConfigEditable(mechanismName) {
-        var st = ensureState();
-        var g = st.groups[mechanismName];
-        if (!g) return true;
-        if (!g.cfgLocked) return true;
+        var mech = getMultiMechanism(mechanismName, false);
+        if (!mech) return true;
+        if (!mech.locks.configLocked) return true;
         if (hasMechanismEditOverride(mechanismName)) return true;
         whisper("Group <b>" + esc(mechanismName) + "</b> is <b>CONFIG LOCKED</b>. Use <b>Override</b> to edit for 60s.");
         return false;
@@ -1035,58 +934,9 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         return bits.join(", ");
     }
 
-    /* ---------- group ops ---------- */
-    function getOrCreateLegacyMultiConfig(name) {
-        var st = ensureState();
-        st.groups[name] = st.groups[name] || {
-            required: 0,
-            plates: [],
-            doors: {},
-
-            locked: false,       // trigger lock
-            lockFreeze: false,   // freeze door state when locked
-
-            cfgLocked: false,    // config lock
-            autoLock: false,     // auto lock after first trigger
-            hasTriggered: false,
-
-            msgOn: "",
-            msgOff: "",
-            lastActive: false
-        };
-
-        // backfill
-        var g = st.groups[name];
-        if (typeof g.locked === "undefined") g.locked = false;
-        if (typeof g.lockFreeze === "undefined") g.lockFreeze = false;
-        if (typeof g.cfgLocked === "undefined") g.cfgLocked = false;
-        if (typeof g.autoLock === "undefined") g.autoLock = false;
-        if (typeof g.hasTriggered === "undefined") g.hasTriggered = false;
-        if (!g.doors) g.doors = {};
-        if (!g.plates) g.plates = [];
-        if (typeof g.required === "undefined") g.required = 0;
-
-        if (typeof g.msgOn === "undefined") g.msgOn = "";
-        if (typeof g.msgOff === "undefined") g.msgOff = "";
-        if (typeof g.lastActive === "undefined") g.lastActive = false;
-
-        return g;
-    }
-
-    function getSingleMechanism(plateId) {
-        ensureSingleConfigData(plateId);
-        return syncSingleMechanismFromLegacy(plateId);
-    }
-
-    function getGroupMechanism(name, createMissing) {
-        if (createMissing) getOrCreateLegacyMultiConfig(name);
-        return syncMultiMechanismFromLegacy(name);
-    }
-
     function commitMechanism(mech) {
         if (!mech) return null;
         ensureState().mechanisms[mech.id] = mech;
-        syncLegacyFromMechanism(mech);
         return mech;
     }
 
@@ -1098,7 +948,7 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
     }
 
     function updateGroupMechanism(name, createMissing, mutator) {
-        var mech = getGroupMechanism(name, createMissing);
+        var mech = getMultiMechanism(name, createMissing);
         if (!mech) return null;
         mutator(mech);
         return commitMechanism(mech);
@@ -1214,7 +1064,7 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
 
                 o.set({ name: newName });
 
-                ensureSingleConfigData(o.id);
+                getSingleMechanism(o.id);
             }
         }
 
@@ -1273,13 +1123,13 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
     function cmdRemoveSingleMechanism(plateId) {
         var st = ensureState();
         unlockTokensForSource(plateId);
-        delete st.plates[plateId];
         delete st.mechanisms[singleMechanismId(plateId)];
 
         // Also remove it from any groups
-        for (var gname in st.groups) {
-            if (!st.groups.hasOwnProperty(gname)) continue;
-            updateGroupMechanism(gname, false, function (mech) {
+        for (var mechId in st.mechanisms) {
+            if (!st.mechanisms.hasOwnProperty(mechId)) continue;
+            if (st.mechanisms[mechId].kind !== "group") continue;
+            updateGroupMechanism(st.mechanisms[mechId].legacyId, false, function (mech) {
                 mechanismRemoveSource(mech, plateId);
             });
         }
@@ -1546,142 +1396,260 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
     }
 
     function renderTrapUI(playerid, plateId) {
-        var mech = getSingleMechanism(plateId);
-        if (!mech) return whisper("Trigger not found.");
+        return renderMechanismEditor(playerid, plateId);
+    }
 
-        var plate = getObj("graphic", plateId);
-        if (!plate) return whisper("Trigger not found.");
+    function resolveMechanismRef(ref) {
+        var st = ensureState();
+        if (st.mechanisms[ref]) return st.mechanisms[ref];
+        if (getObj("graphic", ref)) return getSingleMechanism(ref);
+        return getMultiMechanism(ref, false);
+    }
 
-        var trap = mech.effects.trap;
-        var occ = isSourceOccupied(plate);
-        var name = mechanismDisplayName(mech);
-        var enabled = trap.enabled && trap.type !== "none";
-        var triggerHint = enabled ? (trapTypeLabel(trap.type) + " / " + trapTriggerLabel(trap.trigger)) : "Disabled";
+    function renderMultiMechanismEditor(playerid, mech) {
+        return renderMechanismEditor(playerid, mech.id || mech.legacyId);
+    }
 
+    function renderMechanismEditor(playerid, ref) {
+        var mech = (typeof ref === "object") ? ref : resolveMechanismRef(ref);
+        if (!mech) return whisper("Mechanism not found.");
+
+        backfillMechanismData(mech);
+
+        var isSingle = mech.kind === "single";
+        var trap = isSingle ? backfillTrapConfig(mech.effects.trap) : null;
+        var sourceId = isSingle ? mech.legacyId : "";
+        var sourceObj = isSingle ? getObj("graphic", sourceId) : null;
+        var active = mechanismIsActive(mech);
+        var required = mechanismRequiredCount(mech);
+        var pressed = countActiveMechanismSources(mech);
+        var overrideActive = (!isSingle) && hasMechanismEditOverride(mech.legacyId);
+        var editBlocked = (!isSingle) && mech.locks.configLocked && !overrideActive;
         var html = "";
-        html += '<div style="border:2px solid #111;border-radius:12px;overflow:hidden;max-width:760px;font-family:Arial,sans-serif;">';
-        html += '<div style="background:#000;color:#fff;padding:10px 12px;">';
-        html += '<div style="font-weight:900;font-size:20px;">Mechanism Configuration</div>';
-        html += '<div style="color:#cfcfcf;font-weight:900;font-size:12px;margin-top:2px;">' + esc(name) + " • " + esc(triggerHint) + "</div>";
+
+        html += "<div style=\"border:2px solid #111;border-radius:12px;overflow:hidden;max-width:760px;font-family:Arial,sans-serif;\">";
+        html += "<div style=\"background:#000;color:#fff;padding:10px 12px;\">";
+        html += "<div style=\"font-weight:900;font-size:20px;\">Mechanism Configuration</div>";
+        html += "<div style=\"color:#cfcfcf;font-weight:900;font-size:12px;margin-top:2px;\">" + esc(mechanismDisplayName(mech)) + " • " + esc(mechanismRuleSummary(mech)) + "</div>";
         html += "</div>";
-        html += '<div style="background:#fff;padding:10px;">';
+        html += "<div style=\"background:#fff;padding:10px;\">";
+
+        html += "<div style=\"border:2px solid #111;border-radius:10px;padding:10px;margin-bottom:10px;\">";
+        html += badge(active ? "ACTIVE" : "INACTIVE", active);
+        html += badge(isSingle ? "SINGLE" : "MULTI", false);
+        if (isSingle) html += badge((trap.enabled && trap.type !== "none") ? "TRAP ENABLED" : "TRAP DISABLED", false);
+        if (!isSingle && mech.locks.mechanismLocked) html += badge(mech.locks.freezeWhenLocked ? "FROZEN" : "LOCKED", false);
+        if (!isSingle && mech.locks.configLocked) html += badge("CONFIG", false);
+        if (overrideActive) html += badge("OVERRIDE", true);
+        if (!isSingle && mech.locks.autoLock) html += badge("AUTOLOCK", true);
+        html += "<div style=\"margin-top:8px;\">";
+        html += iconBtn("↩️", "!mech ui", "Back to mechanism list");
+        html += iconBtn("🔄", "!mech edit " + mech.legacyId, "Refresh mechanism configuration");
+        if (isSingle) {
+            html += iconBtn("🔍", "!mech ping " + sourceId, "Ping trigger");
+            html += iconBtn("✅", "!mech checkplate " + sourceId, "Check mechanism");
+            html += iconBtn("⬆️", "!mech simopen " + sourceId, "Force open (simulate triggered)");
+            html += iconBtn("⬇️", "!mech simclose " + sourceId, "Force close (simulate released)");
+            html += iconBtn("🗑️", "!mech removeplate " + sourceId, "Remove mechanism");
+        } else {
+            html += iconBtn("✅", "!mech groupcheck " + mech.legacyId, "Check mechanism");
+            if (editBlocked) html += iconBtnDisabled("🗑️", "Config locked");
+            else html += iconBtn("🗑️", "!mech groupremove " + mech.legacyId, "Remove mechanism");
+        }
+        if (isSingle) {
+            html += iconBtn("💣", "!mech traptoggle " + sourceId, (trap.enabled && trap.type !== "none") ? "Disable trap" : "Enable trap");
+        } else {
+            html += iconBtn(mech.locks.mechanismLocked ? "🔒" : "🔓", "!mech grouplock " + mech.legacyId, "Toggle mechanism lock");
+            html += iconBtn(mech.locks.configLocked ? "🧱" : "✏️", "!mech groupcfglock " + mech.legacyId, "Toggle config lock");
+            html += iconBtn(mech.locks.autoLock ? "⭐" : "☆", "!mech groupautolock " + mech.legacyId, "Toggle auto-lock after first trigger");
+            html += iconBtn("🔁", "!mech groupreset " + mech.legacyId, "Reset trigger state");
+        }
+        html += "</div>";
+        if (isSingle && sourceObj) {
+            html += "<div style=\"margin-top:8px;font-weight:900;\">State: <span style=\"color:#333;\">" + esc(isSourceOccupied(sourceObj) ? "OCCUPIED" : "CLEAR") + "</span></div>";
+        } else if (!isSingle) {
+            html += "<div style=\"margin-top:8px;font-weight:900;\">Pressed: <span style=\"color:#333;\">" + esc(String(pressed)) + "/" + esc(String(required)) + "</span></div>";
+        }
+        html += "</div>";
+
+        if (!isSingle) {
+            html += "<div style=\"border:2px solid #111;border-radius:10px;padding:10px;margin-bottom:10px;background:#fafafa;\">";
+            html += "<div style=\"font-weight:900;font-size:16px;margin-bottom:6px;\">Locking</div>";
+            html += "<div style=\"margin-top:4px;font-weight:900;\">Mechanism lock: <span style=\"color:#333;\">" + esc(mech.locks.mechanismLocked ? (mech.locks.freezeWhenLocked ? "FROZEN" : "LOCKED") : "UNLOCKED") + "</span></div>";
+            html += '<div style="margin-top:4px;font-weight:900;">Config lock: <span style="color:#333;">' + esc(mech.locks.configLocked ? "LOCKED" : "UNLOCKED") + "</span></div>";
+            html += '<div style="margin-top:4px;font-weight:900;">Auto-lock: <span style="color:#333;">' + esc(mech.locks.autoLock ? "ON" : "OFF") + "</span></div>";
+            html += '<div style="margin-top:4px;font-weight:900;">Override: <span style="color:#333;">' + esc(overrideActive ? "ACTIVE" : "INACTIVE") + "</span></div>";
+            html += "</div>";
+        }
+
+        html += '<div style="border:2px solid #111;border-radius:10px;padding:10px;margin-bottom:10px;background:#fafafa;">';
+        html += '<div style="font-weight:900;font-size:16px;margin-bottom:6px;">Messages</div>';
+        if (isSingle) {
+            html += mini("Set On", "!mech platemsgon " + sourceId + " ?{Trigger message|}", "Set trigger message");
+            html += mini("Set Off", "!mech platemsgoff " + sourceId + " ?{Release message|}", "Set release message");
+        } else if (editBlocked) {
+            html += miniDisabled("Set On", "Config locked");
+            html += miniDisabled("Set Off", "Config locked");
+        } else {
+            html += mini("Set On", "!mech groupmsgon " + mech.legacyId + " ?{Trigger message|}", "Set trigger message");
+            html += mini("Set Off", "!mech groupmsgoff " + mech.legacyId + " ?{Release message|}", "Set release message");
+        }
+        html += '<div style="margin-top:8px;font-weight:900;">On: <span style="color:#333;">' + esc(mech.messages.on || "(none)") + "</span></div>";
+        html += '<div style="margin-top:4px;font-weight:900;">Off: <span style="color:#333;">' + esc(mech.messages.off || "(none)") + "</span></div>";
+        if (isSingle) {
+            html += '<div style="margin-top:8px;font-weight:900;">Trap message: <span style="color:#333;">' + esc(String(trap.message || "").trim() || "(none)") + "</span></div>";
+            html += mini("Set trap message", "!mech trapmsg " + sourceId + " ?{Trap message|}", "Set trap narration");
+        }
+        html += "</div>";
 
         html += '<div style="border:2px solid #111;border-radius:10px;padding:10px;margin-bottom:10px;">';
-        html += badge(occ ? "OCCUPIED" : "CLEAR", occ);
-        html += enabled ? badge("TRAP ENABLED", false) : badge("TRAP DISABLED", false);
-        html += '<div style="margin-top:8px;">';
-        html += iconBtn("↩️", "!mech ui", "Back to mechanism list");
-        html += iconBtn("💣", "!mech traptoggle " + plateId, enabled ? "Disable trap" : "Enable trap");
-        html += iconBtn("🔄", "!mech trapui " + plateId, "Refresh trap configuration");
-        html += "</div>";
+        html += '<div style="font-weight:900;font-size:16px;margin-bottom:6px;">Rule</div>';
+        if (isSingle) {
+            html += mini("Press", "!mech traptrigger " + sourceId + " press", "Fire on press");
+            html += mini("Release", "!mech traptrigger " + sourceId + " release", "Fire on release");
+            html += mini("Both", "!mech traptrigger " + sourceId + " both", "Fire on press and release");
+        } else if (editBlocked) {
+            html += miniDisabled("Require ALL", "Config locked");
+            html += miniDisabled("Set K", "Config locked");
+        } else {
+            html += mini("Require ALL", "!mech groupsetall " + mech.legacyId, "Require all sources");
+            html += mini("Set K", "!mech groupsetk " + mech.legacyId + " ?{Require how many sources?|2}", "Set K-of-N");
+        }
+        html += '<div style="margin-top:8px;font-weight:900;">Current: <span style="color:#333;">' + esc(mechanismRuleSummary(mech)) + "</span></div>";
         html += "</div>";
 
         html += '<div style="border:2px solid #111;border-radius:10px;padding:10px;margin-bottom:10px;background:#fafafa;">';
-        html += '<div style="font-weight:900;font-size:16px;margin-bottom:6px;">Trap Type</div>';
-        html += mini("Alarm", "!mech traptype " + plateId + " alarm", "Narration or warning trap");
-        html += mini("Damage", "!mech traptype " + plateId + " damage", "Damage trap");
-        html += mini("Save", "!mech traptype " + plateId + " save", "Save/check prompt trap");
-        html += mini("Status", "!mech traptype " + plateId + " status", "Apply status markers");
-        html += mini("Spawn", "!mech traptype " + plateId + " spawn", "Reveal selected spawn tokens");
-        html += mini("Teleport", "!mech traptype " + plateId + " teleport", "Teleport occupants");
-        html += mini("Reveal", "!mech traptype " + plateId + " reveal", "Reveal hidden targets");
-        html += mini("Disable", "!mech traptype " + plateId + " none", "Disable trap without removing plate");
-        html += '<div style="margin-top:8px;font-weight:900;">Current type: <span style="color:#333;">' + esc(trapTypeLabel(trap.type)) + "</span></div>";
+        html += '<div style="font-weight:900;font-size:16px;margin-bottom:6px;">Sources</div>';
+        if (!isSingle) {
+            if (editBlocked) html += miniDisabled("Add selected sources", "Config locked");
+            else html += mini("Add selected sources", "!mech groupaddplates " + mech.legacyId, "Add selected sources");
+        }
+        for (var i = 0; i < mech.sources.length; i++) {
+            var src = getObj("graphic", mech.sources[i]);
+            if (!src) continue;
+            html += '<div style="margin-top:6px;font-weight:900;">' + esc(src.get("name") || ("Trigger …" + shortId(src.id))) + ' ';
+            html += mini("Ping", "!mech ping " + src.id, "Ping source");
+            if (!isSingle) {
+                if (editBlocked) html += miniDisabled("Remove", "Config locked");
+                else html += mini("Remove", "!mech groupdelplate " + mech.legacyId + " " + src.id, "Remove source");
+            }
+            html += "</div>";
+        }
+        if (!mech.sources.length) html += '<div style="margin-top:6px;color:#666;font-weight:900;">(No sources)</div>';
         html += "</div>";
 
         html += '<div style="border:2px solid #111;border-radius:10px;padding:10px;margin-bottom:10px;">';
-        html += '<div style="font-weight:900;font-size:16px;margin-bottom:6px;">Trigger</div>';
-        html += mini("Press", "!mech traptrigger " + plateId + " press", "Fire when the plate is pressed");
-        html += mini("Release", "!mech traptrigger " + plateId + " release", "Fire when the plate is released");
-        html += mini("Both", "!mech traptrigger " + plateId + " both", "Fire on press and release");
-        html += '<div style="margin-top:8px;font-weight:900;">Current trigger: <span style="color:#333;">' + esc(trapTriggerLabel(trap.trigger)) + "</span></div>";
+        html += '<div style="font-weight:900;font-size:16px;margin-bottom:6px;">Doors</div>';
+        if (isSingle) {
+            html += mini("Bind LOCK doors", "!mech add lock", "Select this source and doors, then click");
+            html += mini("Bind SECRET doors", "!mech add secret", "Select this source and doors, then click");
+        } else if (editBlocked) {
+            html += miniDisabled("Add LOCK", "Config locked");
+            html += miniDisabled("Add SECRET", "Config locked");
+        } else {
+            html += mini("Add LOCK", "!mech groupadddoors " + mech.legacyId + " lock", "Bind selected doors as lock");
+            html += mini("Add SECRET", "!mech groupadddoors " + mech.legacyId + " secret", "Bind selected doors as secret");
+        }
+        for (var doorId in mech.effects.doors) {
+            if (!mech.effects.doors.hasOwnProperty(doorId)) continue;
+            html += '<div style="margin-top:6px;font-weight:900;">' + esc(String(mech.effects.doors[doorId]).toUpperCase()) + " door …" + esc(shortId(doorId)) + " ";
+            if (!isSingle) {
+                if (editBlocked) html += miniDisabled("Detach", "Config locked");
+                else html += mini("Detach", "!mech groupdeldor " + mech.legacyId + " " + doorId, "Detach door");
+            }
+            html += "</div>";
+        }
+        if (!Object.keys(mech.effects.doors).length) html += '<div style="margin-top:6px;color:#666;font-weight:900;">(No doors)</div>';
         html += "</div>";
 
-        html += '<div style="border:2px solid #111;border-radius:10px;padding:10px;margin-bottom:10px;">';
-        html += '<div style="font-weight:900;font-size:16px;margin-bottom:6px;">Messaging</div>';
-        html += mini("Set message", "!mech trapmsg " + plateId + " ?{Trap message|}", "Optional narration when the trap fires");
-        html += '<div style="margin-top:8px;font-weight:900;">Message: <span style="color:#333;">' + esc(String(trap.message || "").trim() || "(none)") + "</span></div>";
-        html += "</div>";
-
-        if (trap.type === "damage") {
+        if (isSingle) {
             html += '<div style="border:2px solid #111;border-radius:10px;padding:10px;margin-bottom:10px;background:#fafafa;">';
-            html += '<div style="font-weight:900;font-size:16px;margin-bottom:6px;">Damage Settings</div>';
-            html += mini("Set damage", "!mech trapdamage " + plateId + " ?{Damage roll|1d6}", "Roll expression for the damage trap");
-            html += '<div style="margin-top:8px;font-weight:900;">Damage: <span style="color:#333;">' + esc(trap.damage) + "</span></div>";
+            html += '<div style="font-weight:900;font-size:16px;margin-bottom:6px;">Primary Effect</div>';
+            html += mini("Alarm", "!mech traptype " + sourceId + " alarm", "Narration or warning trap");
+            html += mini("Damage", "!mech traptype " + sourceId + " damage", "Damage trap");
+            html += mini("Save", "!mech traptype " + sourceId + " save", "Save/check prompt trap");
+            html += mini("Status", "!mech traptype " + sourceId + " status", "Apply status markers");
+            html += mini("Spawn", "!mech traptype " + sourceId + " spawn", "Reveal selected spawn tokens");
+            html += mini("Teleport", "!mech traptype " + sourceId + " teleport", "Teleport occupants");
+            html += mini("Reveal", "!mech traptype " + sourceId + " reveal", "Reveal hidden targets");
+            html += mini("Disable", "!mech traptype " + sourceId + " none", "Disable trap without removing mechanism");
+            html += '<div style="margin-top:8px;font-weight:900;">Current type: <span style="color:#333;">' + esc(trapTypeLabel(trap.type)) + "</span></div>";
+            html += '<div style="margin-top:4px;font-weight:900;">Effects: <span style="color:#333;">' + esc(mechanismEffectSummary(mech)) + "</span></div>";
+            html += "</div>";
+
+            if (trap.type === "damage") {
+                html += '<div style="border:2px solid #111;border-radius:10px;padding:10px;margin-bottom:10px;">';
+                html += '<div style="font-weight:900;font-size:16px;margin-bottom:6px;">Damage</div>';
+                html += mini("Set damage", "!mech trapdamage " + sourceId + " ?{Damage roll|1d6}", "Set damage roll");
+                html += '<div style="margin-top:8px;font-weight:900;">Damage: <span style="color:#333;">' + esc(trap.damage) + "</span></div>";
+                html += "</div>";
+            }
+
+            if (trap.type === "save") {
+                html += '<div style="border:2px solid #111;border-radius:10px;padding:10px;margin-bottom:10px;">';
+                html += '<div style="font-weight:900;font-size:16px;margin-bottom:6px;">Save</div>';
+                html += mini("Set label", "!mech trapsavelabel " + sourceId + " ?{Save label|DEX}", "Set save label");
+                html += mini("Set DC", "!mech trapsavedc " + sourceId + " ?{Save DC|12}", "Set save DC");
+                html += mini("Set success text", "!mech trapsavesuccessmsg " + sourceId + " ?{Success text|}", "Set success text");
+                html += mini("Set fail text", "!mech trapsavefailmsg " + sourceId + " ?{Fail text|}", "Set fail text");
+                html += mini("Success HALF", "!mech trapsavesuccess " + sourceId + " half", "Success takes half damage");
+                html += mini("Success NONE", "!mech trapsavesuccess " + sourceId + " none", "Success takes no damage");
+                html += mini("Set dmg type", "!mech trapsavedmgtype " + sourceId + " ?{Damage type|piercing|slashing|bludgeoning|acid|cold|fire|force|lightning|necrotic|poison|psychic|radiant|thunder}", "Set damage type");
+                html += mini("Set fail damage", "!mech trapsavefaildmg " + sourceId + " ?{Fail damage|1d6}", "Set fail damage");
+                html += '<div style="margin-top:8px;font-weight:900;">Save: <span style="color:#333;">' + esc(String(trap.save.label).toUpperCase()) + " DC " + esc(String(trap.save.dc)) + "</span></div>";
+                html += '<div style="margin-top:4px;font-weight:900;">Success result: <span style="color:#333;">' + esc(String(trap.save.successMode || "none").toUpperCase()) + "</span></div>";
+                html += '<div style="margin-top:4px;font-weight:900;">Damage type: <span style="color:#333;">' + esc(String(trap.save.damageType || "").trim() || "(none)") + "</span></div>";
+                html += '<div style="margin-top:4px;font-weight:900;">Fail damage: <span style="color:#333;">' + esc(String(trap.save.failDamage || "").trim() || "(none)") + "</span></div>";
+                html += "</div>";
+            }
+
+            if (trap.type === "status") {
+                html += '<div style="border:2px solid #111;border-radius:10px;padding:10px;margin-bottom:10px;">';
+                html += '<div style="font-weight:900;font-size:16px;margin-bottom:6px;">Status</div>';
+                html += mini("Set markers", "!mech trapstatusmarkers " + sourceId + " ?{Markers (comma-separated)|cobweb}", "Set markers");
+                html += mini(trap.status.clearOnRelease ? "Clear on release: ON" : "Clear on release: OFF", "!mech trapstatusclear " + sourceId, "Toggle clear on release");
+                html += '<div style="margin-top:8px;font-weight:900;">Markers: <span style="color:#333;">' + esc(describeStatusMarkers(trap)) + "</span></div>";
+                html += "</div>";
+            }
+
+            if (trap.type === "teleport") {
+                html += '<div style="border:2px solid #111;border-radius:10px;padding:10px;margin-bottom:10px;">';
+                html += '<div style="font-weight:900;font-size:16px;margin-bottom:6px;">Teleport</div>';
+                html += mini("Set destination", "!mech trapsetteleport " + sourceId, "Set destination from selection");
+                html += mini("Clear destination", "!mech trapclearteleport " + sourceId, "Clear destination");
+                html += '<div style="margin-top:8px;font-weight:900;">Destination: <span style="color:#333;">' + esc(describeTeleportDestination(trap)) + "</span></div>";
+                html += "</div>";
+            }
+
+            if (trap.type === "reveal" || trap.type === "spawn") {
+                html += '<div style="border:2px solid #111;border-radius:10px;padding:10px;margin-bottom:10px;">';
+                html += '<div style="font-weight:900;font-size:16px;margin-bottom:6px;">Effect Targets</div>';
+                if (trap.type === "reveal") {
+                    html += mini("Set reveal targets", "!mech trapsetreveal " + sourceId, "Set reveal targets from selection");
+                    html += mini("Clear reveal targets", "!mech trapclearreveal " + sourceId, "Clear reveal targets");
+                    html += '<div style="margin-top:8px;font-weight:900;">Reveal targets: <span style="color:#333;">' + esc(describeRevealTargets(trap)) + "</span></div>";
+                } else {
+                    html += mini("Set spawn targets", "!mech trapsetspawn " + sourceId, "Set spawn targets from selection");
+                    html += mini("Clear spawn targets", "!mech trapclearspawn " + sourceId, "Clear spawn targets");
+                    html += '<div style="margin-top:8px;font-weight:900;">Spawn targets: <span style="color:#333;">' + esc(describeSpawnTargets(trap)) + "</span></div>";
+                }
+                html += "</div>";
+            }
+
+            html += '<div style="border:2px solid #111;border-radius:10px;padding:10px;margin-bottom:10px;background:#fafafa;">';
+            html += '<div style="font-weight:900;font-size:16px;margin-bottom:6px;">Extra Effects</div>';
+            if (trap.type !== "reveal") html += mini(trap.effects.revealAlso ? "Reveal targets: ON" : "Reveal targets: OFF", "!mech traprevealtoggle " + sourceId, "Toggle reveal effect");
+            html += mini("Set reveal targets", "!mech trapsetreveal " + sourceId, "Set reveal targets");
+            html += mini("Clear reveal targets", "!mech trapclearreveal " + sourceId, "Clear reveal targets");
+            html += mini(trap.effects.lockToken ? "Lock token: ON" : "Lock token: OFF", "!mech traplocktoggle " + sourceId, "Toggle lock token effect");
+            html += mini("Set lock marker", "!mech traplockmarker " + sourceId + " ?{Lock marker|fishing-net}", "Set lock marker");
+            html += mini("Unlock tokens", "!mech trapunlock " + sourceId, "Unlock affected tokens");
+            html += '<div style="margin-top:8px;font-weight:900;">Reveal targets: <span style="color:#333;">' + esc(describeRevealTargets(trap)) + "</span></div>";
+            html += '<div style="margin-top:4px;font-weight:900;">Lock effect: <span style="color:#333;">' + esc(trap.effects.lockToken ? "ON" : "OFF") + "</span></div>";
+            html += '<div style="margin-top:4px;font-weight:900;">Lock marker: <span style="color:#333;">' + esc(String(trap.effects.lockMarker || "").trim() || "(none)") + "</span></div>";
+            html += '<div style="margin-top:4px;font-weight:900;">Locked tokens: <span style="color:#333;">' + esc(String(lockedCountForSource(sourceId))) + "</span></div>";
             html += "</div>";
         }
-
-        if (trap.type === "save") {
-            html += '<div style="border:2px solid #111;border-radius:10px;padding:10px;margin-bottom:10px;background:#fafafa;">';
-            html += '<div style="font-weight:900;font-size:16px;margin-bottom:6px;">Save Settings</div>';
-            html += mini("Set save label", "!mech trapsavelabel " + plateId + " ?{Save label|DEX}", "Ability/check label");
-            html += mini("Set DC", "!mech trapsavedc " + plateId + " ?{Save DC|12}", "Difficulty class");
-            html += mini("Set success text", "!mech trapsavesuccessmsg " + plateId + " ?{Success text|}", "Text shown on success");
-            html += mini("Set fail text", "!mech trapsavefailmsg " + plateId + " ?{Fail text|}", "Text shown on fail");
-            html += mini("Success: HALF", "!mech trapsavesuccess " + plateId + " half", "Success takes half damage");
-            html += mini("Success: NONE", "!mech trapsavesuccess " + plateId + " none", "Success takes no damage");
-            html += mini("Set damage type", "!mech trapsavedmgtype " + plateId + " ?{Damage type|piercing|slashing|bludgeoning|acid|cold|fire|force|lightning|necrotic|poison|psychic|radiant|thunder}", "Associated damage type");
-            html += mini("Set fail damage", "!mech trapsavefaildmg " + plateId + " ?{Fail damage|1d6}", "Optional fail damage");
-            html += '<div style="margin-top:8px;font-weight:900;">Save: <span style="color:#333;">' + esc(String(trap.save.label).toUpperCase()) + " DC " + esc(String(trap.save.dc)) + "</span></div>";
-            html += '<div style="margin-top:4px;font-weight:900;">Success: <span style="color:#333;">' + esc(String(trap.save.successMsg || "").trim() || "(none)") + "</span></div>";
-            html += '<div style="margin-top:4px;font-weight:900;">Success result: <span style="color:#333;">' + esc(String(trap.save.successMode || "none").toUpperCase()) + "</span></div>";
-            html += '<div style="margin-top:4px;font-weight:900;">Damage type: <span style="color:#333;">' + esc(String(trap.save.damageType || "").trim() || "(none)") + "</span></div>";
-            html += '<div style="margin-top:4px;font-weight:900;">Fail: <span style="color:#333;">' + esc(String(trap.save.failMsg || "").trim() || "(none)") + "</span></div>";
-            html += '<div style="margin-top:4px;font-weight:900;">Fail damage: <span style="color:#333;">' + esc(String(trap.save.failDamage || "").trim() || "(none)") + "</span></div>";
-            html += "</div>";
-        }
-
-        if (trap.type === "status") {
-            html += '<div style="border:2px solid #111;border-radius:10px;padding:10px;margin-bottom:10px;background:#fafafa;">';
-            html += '<div style="font-weight:900;font-size:16px;margin-bottom:6px;">Status Settings</div>';
-            html += mini("Set markers", "!mech trapstatusmarkers " + plateId + " ?{Markers (comma-separated)|cobweb}", "Token status markers to apply");
-            html += mini(trap.status.clearOnRelease ? "Clear on release: ON" : "Clear on release: OFF", "!mech trapstatusclear " + plateId, "Toggle removal when the plate releases");
-            html += '<div style="margin-top:8px;font-weight:900;">Markers: <span style="color:#333;">' + esc(describeStatusMarkers(trap)) + "</span></div>";
-            html += '<div style="margin-top:4px;font-weight:900;">Clear on release: <span style="color:#333;">' + esc(trap.status.clearOnRelease ? "ON (press-trigger only)" : "OFF") + "</span></div>";
-            html += "</div>";
-        }
-
-        if (trap.type === "teleport") {
-            html += '<div style="border:2px solid #111;border-radius:10px;padding:10px;margin-bottom:10px;background:#fafafa;">';
-            html += '<div style="font-weight:900;font-size:16px;margin-bottom:6px;">Teleport Settings</div>';
-            html += mini("Set destination from selection", "!mech trapsetteleport " + plateId, "Select one marker graphic, then click");
-            html += mini("Clear destination", "!mech trapclearteleport " + plateId, "Remove teleport destination");
-            html += '<div style="margin-top:8px;font-weight:900;">Destination: <span style="color:#333;">' + esc(describeTeleportDestination(trap)) + "</span></div>";
-            html += "</div>";
-        }
-
-        if (trap.type === "reveal") {
-            html += '<div style="border:2px solid #111;border-radius:10px;padding:10px;margin-bottom:10px;background:#fafafa;">';
-            html += '<div style="font-weight:900;font-size:16px;margin-bottom:6px;">Reveal Settings</div>';
-            html += mini("Set reveal targets from selection", "!mech trapsetreveal " + plateId, "Select graphics or doors to reveal, then click");
-            html += mini("Clear reveal targets", "!mech trapclearreveal " + plateId, "Remove reveal target list");
-            html += '<div style="margin-top:8px;font-weight:900;">Targets: <span style="color:#333;">' + esc(describeRevealTargets(trap)) + "</span></div>";
-            html += "</div>";
-        }
-
-        if (trap.type === "spawn") {
-            html += '<div style="border:2px solid #111;border-radius:10px;padding:10px;margin-bottom:10px;background:#fafafa;">';
-            html += '<div style="font-weight:900;font-size:16px;margin-bottom:6px;">Spawn Settings</div>';
-            html += mini("Set spawn targets from selection", "!mech trapsetspawn " + plateId, "Select one or more GM-layer graphics to reveal");
-            html += mini("Clear spawn targets", "!mech trapclearspawn " + plateId, "Remove spawn target list");
-            html += '<div style="margin-top:8px;font-weight:900;">Targets: <span style="color:#333;">' + esc(describeSpawnTargets(trap)) + "</span></div>";
-            html += "</div>";
-        }
-
-        html += '<div style="border:2px solid #111;border-radius:10px;padding:10px;margin-bottom:10px;">';
-        html += '<div style="font-weight:900;font-size:16px;margin-bottom:6px;">Extra Effects</div>';
-        if (trap.type !== "reveal") html += mini(trap.effects.revealAlso ? "Reveal targets: ON" : "Reveal targets: OFF", "!mech traprevealtoggle " + plateId, "Toggle revealing configured targets when this trap triggers");
-        html += mini("Set reveal targets", "!mech trapsetreveal " + plateId, "Select graphics or doors to reveal, then click");
-        html += mini("Clear reveal targets", "!mech trapclearreveal " + plateId, "Remove reveal target list");
-        html += mini(trap.effects.lockToken ? "Lock token: ON" : "Lock token: OFF", "!mech traplocktoggle " + plateId, "Toggle immobilizing tokens hit by this trap");
-        html += mini("Set lock marker", "!mech traplockmarker " + plateId + " ?{Lock marker|fishing-net}", "Marker added to locked tokens");
-        html += mini("Unlock tokens", "!mech trapunlock " + plateId, "Clear tokens currently locked by this plate");
-        if (trap.type !== "reveal") html += '<div style="margin-top:8px;font-weight:900;">Reveal effect: <span style="color:#333;">' + esc(trap.effects.revealAlso ? "ON" : "OFF") + "</span></div>";
-        html += '<div style="margin-top:4px;font-weight:900;">Reveal targets: <span style="color:#333;">' + esc(describeRevealTargets(trap)) + "</span></div>";
-        html += '<div style="margin-top:8px;font-weight:900;">Lock effect: <span style="color:#333;">' + esc(trap.effects.lockToken ? "ON" : "OFF") + "</span></div>";
-        html += '<div style="margin-top:4px;font-weight:900;">Lock marker: <span style="color:#333;">' + esc(String(trap.effects.lockMarker || "").trim() || "(none)") + "</span></div>";
-        html += '<div style="margin-top:4px;font-weight:900;">Locked tokens: <span style="color:#333;">' + esc(String(lockedCountForSource(plateId))) + "</span></div>";
-        html += "</div>";
 
         html += "</div></div>";
         whisper(html);
@@ -1694,7 +1662,7 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
 
         required = parseInt(required, 10);
         if (isNaN(required) || required < 0) required = 0;
-        var mech = getGroupMechanism(name, true);
+        var mech = getMultiMechanism(name, true);
         mech.rule.mode = required === 0 ? "all" : "kofn";
         mech.rule.k = required === 0 ? mech.sources.length : required;
 
@@ -1708,7 +1676,7 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
                 o.set({ layer: "gmlayer" });
                 if (!o.get("name")) o.set({ name: "Plate " + shortId(o.id) });
 
-                ensureSingleConfigData(o.id);
+                getSingleMechanism(o.id);
                 if (mechanismAddSource(mech, o.id)) added++;
             }
         }
@@ -1722,7 +1690,7 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         if (!name) { whisper("Usage: <code>!mech groupaddplates NAME</code>"); return; }
         if (!requireMechanismConfigEditable(name)) return;
 
-        var mech = getGroupMechanism(name, true);
+        var mech = getMultiMechanism(name, true);
         var sel = msg.selected || [];
         var added = 0;
 
@@ -1733,7 +1701,7 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
                 o.set({ layer: "gmlayer" });
                 if (!o.get("name")) o.set({ name: "Plate " + shortId(o.id) });
 
-                ensureSingleConfigData(o.id);
+                getSingleMechanism(o.id);
                 if (mechanismAddSource(mech, o.id)) added++;
             }
         }
@@ -1753,7 +1721,7 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
             return;
         }
 
-        var mech = getGroupMechanism(name, true);
+        var mech = getMultiMechanism(name, true);
         var sel = msg.selected || [];
         var added = 0;
 
@@ -1814,8 +1782,8 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
     // GM override for config lock (60s)
     function cmdEnableMechanismOverride(name) {
         var st = ensureState();
-        var g = st.groups[name];
-        if (!g) return whisper("Group not found: " + esc(name));
+        var mech = getMultiMechanism(name, false);
+        if (!mech) return whisper("Group not found: " + esc(name));
 
         st.editOverride[name] = Date.now() + OVERRIDE_MS;
         whisper("Override enabled for group <b>" + esc(name) + "</b> for <b>60 seconds</b>.");
@@ -1847,7 +1815,6 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
 
     function cmdRemoveMultiMechanism(name) {
         var st = ensureState();
-        delete st.groups[name];
         delete st.mechanisms[multiMechanismId(name)];
         delete st.editOverride[name];
         whisper("Removed group <b>" + esc(name) + "</b>.");
@@ -1984,21 +1951,21 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         // global controls
         html += '<div style="border:2px solid #111;border-radius:10px;padding:10px;margin-bottom:10px;">';
         html += '<div style="font-weight:900;font-size:16px;margin-bottom:6px;">Controls</div>';
-        html += iconBtn("🧱", "!mech make ?{Plate name|Pressure_Plate}", "Make Plate from selected (moves to GM layer)");
+        html += iconBtn("🧱", "!mech make ?{Trigger name|Pressure_Plate}", "Create single-source mechanism from selected trigger");
         html += iconBtn("🧭", "!mech setpage", "Use Current Page (Set)");
         html += iconBtn("🔄", "!mech ui", "Refresh UI");
-        html += iconBtn("✅", "!mech check", "Force Check all plates/groups");
+        html += iconBtn("✅", "!mech check", "Force check all mechanisms");
         html += "</div>";
 
-        // group tools
+        // multi-source builder
         html += '<div style="border:2px solid #111;border-radius:10px;padding:10px;margin-bottom:10px;background:#fafafa;">';
-        html += '<div style="font-weight:900;font-size:16px;margin-bottom:6px;">Multi-Source Tools</div>';
+        html += '<div style="font-weight:900;font-size:16px;margin-bottom:6px;">Multi-Source Builder</div>';
         html += '<div style="color:#333;font-weight:900;margin-bottom:8px;">Suggested name: <span style="font-family:monospace;">' + esc(suggested) + "</span></div>";
 
-        html += mini("Create group from selected plates", "!mech groupmake ?{Group Name (no spaces)|" + esc(suggested) + "} ?{Required K (0=ALL)|0}", "Create/Update group and add selected plates");
-        html += mini("Add selected plates to group", "!mech groupaddplates ?{Group Name (no spaces)|" + esc(suggested) + "}", "Add selected plates to named group");
-        html += mini("Add selected doors LOCK", "!mech groupadddoors ?{Group Name (no spaces)|" + esc(suggested) + "} lock", "Bind selected door(s) to group as LOCK");
-        html += mini("Add selected doors SECRET", "!mech groupadddoors ?{Group Name (no spaces)|" + esc(suggested) + "} secret", "Bind selected door(s) to group as SECRET");
+        html += mini("Create from selected triggers", "!mech groupmake ?{Mechanism Name (no spaces)|" + esc(suggested) + "} ?{Required K (0=ALL)|0}", "Create or update a multi-source mechanism");
+        html += mini("Add selected triggers", "!mech groupaddplates ?{Mechanism Name (no spaces)|" + esc(suggested) + "}", "Add selected triggers to an existing mechanism");
+        html += mini("Add selected LOCK doors", "!mech groupadddoors ?{Mechanism Name (no spaces)|" + esc(suggested) + "} lock", "Bind selected door(s) as LOCK effects");
+        html += mini("Add selected SECRET doors", "!mech groupadddoors ?{Mechanism Name (no spaces)|" + esc(suggested) + "} secret", "Bind selected door(s) as SECRET effects");
         html += "</div>";
 
         html += '<div style="border:2px solid #111;border-radius:10px;margin-bottom:12px;">';
@@ -2018,9 +1985,6 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
             var pressed = countActiveMechanismSources(mech);
             var trap = mech.effects.trap || defaultTrapConfig();
             var trapEnabled = trap.enabled && trap.type !== "none";
-            var lockIcon = mech.locks.mechanismLocked ? "🔒" : "🔓";
-            var cfgIcon = mech.locks.configLocked ? "🧱" : "✏️";
-            var autoIcon = mech.locks.autoLock ? "⭐" : "☆";
             var overrideActive = mech.kind === "group" && hasMechanismEditOverride(mech.legacyId);
             var editBlocked = mech.kind === "group" && mech.locks.configLocked && !overrideActive;
             var lockText = mech.locks.mechanismLocked ? (mech.locks.freezeWhenLocked ? "FROZEN" : "LOCKED") : "UNLOCKED";
@@ -2039,51 +2003,21 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
             html += "</div>";
 
             html += '<div style="padding:8px 10px;">';
+            html += iconBtn("🛠️", "!mech edit " + mech.legacyId, "Edit mechanism");
             if (mech.kind === "single") {
-                var plateId = mech.legacyId;
-                html += iconBtn("🔍", "!mech ping " + plateId, "Ping trigger");
-                html += iconBtn("✅", "!mech checkplate " + plateId, "Check mechanism");
-                html += iconBtn("⬆️", "!mech simopen " + plateId, "Force open (simulate triggered)");
-                html += iconBtn("⬇️", "!mech simclose " + plateId, "Force close (simulate released)");
-                html += iconBtn("🗑️", "!mech removeplate " + plateId, "Remove trigger");
-                html += iconBtn("🔗", "!mech add lock", "Bind selected Door(s) to the selected trigger as LOCK");
-                html += iconBtn("👁️", "!mech add secret", "Bind selected Door(s) to the selected trigger as SECRET");
-                html += iconBtn("💣", "!mech trapui " + plateId, trapEnabled ? "Open mechanism configuration" : "Add trap/effects to this trigger");
-                html += iconBtn("📣", "!mech platemsgon " + plateId + " ?{Trigger message (plate pressed)|}", "Set trigger message (press)");
-                html += iconBtn("🔕", "!mech platemsgoff " + plateId + " ?{Release message (plate released)|}", "Set release message (release)");
+                html += iconBtn("🔍", "!mech ping " + mech.legacyId, "Ping trigger");
+                html += iconBtn("✅", "!mech checkplate " + mech.legacyId, "Check mechanism");
             } else {
-                var gname = mech.legacyId;
-                html += iconBtn(lockIcon, "!mech grouplock " + gname, mech.locks.mechanismLocked ? "Unlock mechanism" : "Lock mechanism (disable)");
-                html += iconBtn("✅", "!mech groupcheck " + gname, "Check mechanism");
-                html += iconBtn(cfgIcon, "!mech groupcfglock " + gname, mech.locks.configLocked ? "Unlock config (allow edits)" : "Lock config (prevent edits)");
-                if (mech.locks.configLocked) html += iconBtn("⚡", "!mech groupoverride " + gname, "Override config lock for 60s");
-                else html += iconBtnDisabled("⚡", "Override only needed when config locked");
-                if (editBlocked) html += iconBtnDisabled(autoIcon, "Config locked (use Override to change auto-lock)");
-                else html += iconBtn(autoIcon, "!mech groupautolock " + gname, mech.locks.autoLock ? "Auto-lock after first trigger: ON (click to disable)" : "Auto-lock after first trigger: OFF (click to enable)");
-                if (editBlocked) html += iconBtnDisabled("🔁", "Config locked (use Override to reset trigger)");
-                else html += iconBtn("🔁", "!mech groupreset " + gname, "Reset hasTriggered (and unfreeze if auto-locked)");
-                if (editBlocked) {
-                    html += iconBtnDisabled("➕", "Config locked");
-                    html += iconBtnDisabled("🔗", "Config locked");
-                    html += iconBtnDisabled("👁️", "Config locked");
-                    html += iconBtnDisabled("🗑️", "Config locked");
-                    html += iconBtnDisabled("📣", "Config locked");
-                    html += iconBtnDisabled("🔕", "Config locked");
-                } else {
-                    html += iconBtn("➕", "!mech groupaddplates " + gname, "Add selected triggers to this mechanism");
-                    html += iconBtn("🔗", "!mech groupadddoors " + gname + " lock", "Add selected doors as LOCK");
-                    html += iconBtn("👁️", "!mech groupadddoors " + gname + " secret", "Add selected doors as SECRET");
-                    html += iconBtn("🗑️", "!mech groupremove " + gname, "Remove mechanism");
-                    html += iconBtn("📣", "!mech groupmsgon " + gname + " ?{Trigger message (group active)|}", "Set trigger message");
-                    html += iconBtn("🔕", "!mech groupmsgoff " + gname + " ?{Release message (group inactive)|}", "Set release message");
-                }
+                html += iconBtn("✅", "!mech groupcheck " + mech.legacyId, "Check mechanism");
             }
 
             html += '<div style="margin-top:6px;font-weight:900;">rule: <span style="font-weight:900;color:#333;">' + esc(mechanismRuleSummary(mech)) + "</span></div>";
             html += '<div style="margin-top:6px;font-weight:900;">effects: <span style="font-weight:900;color:#333;">' + esc(mechanismEffectSummary(mech)) + "</span></div>";
+            html += '<div style="margin-top:6px;font-weight:900;">sources: <span style="font-weight:900;color:#333;">' + esc(String(mech.sources.length)) + "</span></div>";
 
             if (mech.kind === "group") {
                 html += '<div style="margin-top:6px;font-weight:900;">status: <span style="font-weight:900;color:#333;">' + esc(String(pressed)) + "/" + esc(String(required)) + " pressed</span></div>";
+                html += '<div style="margin-top:6px;font-weight:900;">locks: <span style="font-weight:900;color:#333;">' + esc(lockText) + (mech.locks.configLocked ? ", CONFIG" : "") + (mech.locks.autoLock ? ", AUTOLOCK" : "") + "</span></div>";
             }
 
             if (String(mech.messages.on || "").trim()) {
@@ -2091,17 +2025,6 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
             }
             if (String(mech.messages.off || "").trim()) {
                 html += '<div style="margin-top:4px;color:#111;font-weight:900;">Off: <span style="font-weight:700;">' + esc(mech.messages.off) + "</span></div>";
-            }
-
-            if (mech.kind === "group") {
-                html += "<div style='margin-top:6px;'></div>";
-                if (editBlocked) {
-                    html += miniDisabled("Require ALL", "Config locked");
-                    html += miniDisabled("Set K…", "Config locked");
-                } else {
-                    html += mini("Require ALL", "!mech groupsetall " + mech.legacyId, "Require all sources");
-                    html += mini("Set K…", "!mech groupsetk " + mech.legacyId + " ?{Require how many plates?|2}", "Set required K (K-of-N)");
-                }
             }
 
             html += '<div style="margin-top:10px;font-weight:900;">Sources</div>';
@@ -2133,9 +2056,9 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
                 var d3 = getObj("door", did3);
                 if (!d3) continue;
 
-                html += '<div style="margin-left:12px;margin-top:6px;font-weight:900;">' +
+                html += "<div style=\"margin-left:12px;margin-top:6px;font-weight:900;\">" +
                     esc(String(mech.effects.doors[did3]).toUpperCase()) + " door …" + esc(shortId(did3)) +
-                    ' <span style="color:#666;">(' + esc(doorBits(d3)) + ")</span> ";
+                    " <span style=\"color:#666;\">(" + esc(doorBits(d3)) + ")</span> ";
 
                 if (mech.kind === "group") {
                     if (editBlocked) html += miniDisabled("Detach", "Config locked");
@@ -2160,26 +2083,30 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
     function showCommandHelp() {
         whisper(
             "Commands:<br>" +
-            "<code>!mech ui</code>, <code>!mech setpage</code>, <code>!mech make NAME</code>, <code>!mech add lock|secret</code>, <code>!mech check</code>, <code>!mech ping PLATEID</code><br>" +
-            "Trap UI:<br><code>!mech trapui PLATEID</code>, <code>!mech traptoggle PLATEID</code>, <code>!mech traptype PLATEID alarm|damage|teleport|reveal|save|status|spawn|none</code><br>" +
-            "<code>!mech traptrigger PLATEID press|release|both</code>, <code>!mech trapmsg PLATEID ...</code>, <code>!mech trapdamage PLATEID XdY</code><br>" +
-            "<code>!mech trapsavelabel PLATEID LABEL</code>, <code>!mech trapsavedc PLATEID DC</code>, <code>!mech trapsavesuccessmsg PLATEID ...</code>, <code>!mech trapsavefailmsg PLATEID ...</code><br>" +
-            "<code>!mech trapsavesuccess PLATEID half|none</code>, <code>!mech trapsavedmgtype PLATEID TYPE</code>, <code>!mech trapsavefaildmg PLATEID XdY</code>, <code>!mech trapstatusmarkers PLATEID marker1,marker2</code>, <code>!mech trapstatusclear PLATEID</code><br>" +
-            "<code>!mech trapsetteleport PLATEID</code>, <code>!mech trapclearteleport PLATEID</code>, <code>!mech trapsetreveal PLATEID</code>, <code>!mech trapclearreveal PLATEID</code>, <code>!mech traprevealtoggle PLATEID</code><br>" +
-            "<code>!mech trapsetspawn PLATEID</code>, <code>!mech trapclearspawn PLATEID</code>, <code>!mech traplocktoggle PLATEID</code>, <code>!mech traplockmarker PLATEID MARKER</code>, <code>!mech trapunlock PLATEID</code><br>" +
-            "Plate Messages:<br><code>!mech platemsgon PLATEID ...</code>, <code>!mech platemsgoff PLATEID ...</code><br>" +
-            "Groups:<br>" +
+            "<code>!mech ui</code>, <code>!mech edit REF</code>, <code>!mech setpage</code>, <code>!mech make NAME</code>, <code>!mech add lock|secret</code>, <code>!mech check</code>, <code>!mech ping SOURCEID</code><br>" +
+            "Single-Source Effects:<br><code>!mech trapui SOURCEID</code> (alias for edit), <code>!mech traptoggle SOURCEID</code>, <code>!mech traptype SOURCEID alarm|damage|teleport|reveal|save|status|spawn|none</code><br>" +
+            "<code>!mech traptrigger SOURCEID press|release|both</code>, <code>!mech trapmsg SOURCEID ...</code>, <code>!mech trapdamage SOURCEID XdY</code><br>" +
+            "<code>!mech trapsavelabel SOURCEID LABEL</code>, <code>!mech trapsavedc SOURCEID DC</code>, <code>!mech trapsavesuccessmsg SOURCEID ...</code>, <code>!mech trapsavefailmsg SOURCEID ...</code><br>" +
+            "<code>!mech trapsavesuccess SOURCEID half|none</code>, <code>!mech trapsavedmgtype SOURCEID TYPE</code>, <code>!mech trapsavefaildmg SOURCEID XdY</code>, <code>!mech trapstatusmarkers SOURCEID marker1,marker2</code>, <code>!mech trapstatusclear SOURCEID</code><br>" +
+            "<code>!mech trapsetteleport SOURCEID</code>, <code>!mech trapclearteleport SOURCEID</code>, <code>!mech trapsetreveal SOURCEID</code>, <code>!mech trapclearreveal SOURCEID</code>, <code>!mech traprevealtoggle SOURCEID</code><br>" +
+            "<code>!mech trapsetspawn SOURCEID</code>, <code>!mech trapclearspawn SOURCEID</code>, <code>!mech traplocktoggle SOURCEID</code>, <code>!mech traplockmarker SOURCEID MARKER</code>, <code>!mech trapunlock SOURCEID</code><br>" +
+            "Messages:<br><code>!mech platemsgon SOURCEID ...</code>, <code>!mech platemsgoff SOURCEID ...</code><br>" +
+            "Multi-Source Mechanisms:<br>" +
             "<code>!mech grouplock NAME</code> (mechanism lock), <code>!mech groupcfglock NAME</code> (config lock), <code>!mech groupoverride NAME</code> (60s override)<br>" +
             "<code>!mech groupautolock NAME</code>, <code>!mech groupreset NAME</code><br>" +
             "<code>!mech groupmake NAME [K]</code>, <code>!mech groupaddplates NAME</code>, <code>!mech groupadddoors NAME lock|secret</code><br>" +
             "<code>!mech groupmsgon NAME ...</code>, <code>!mech groupmsgoff NAME ...</code><br>" +
-            "<code>!mech groupdelplate NAME PLATEID</code>, <code>!mech groupdeldor NAME DOORID</code>, <code>!mech groupremove NAME</code>"
+            "<code>!mech groupdelplate NAME SOURCEID</code>, <code>!mech groupdeldor NAME DOORID</code>, <code>!mech groupremove NAME</code>"
         );
     }
 
     function handleUiCommands(msg, sub) {
         if (sub === "ui") {
             renderUI(msg.playerid);
+            return true;
+        }
+        if (sub === "edit") {
+            renderMechanismEditor(msg.playerid, msg.content.split(/\s+/)[2]);
             return true;
         }
         if (sub === "setpage") {
