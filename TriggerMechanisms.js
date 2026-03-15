@@ -118,7 +118,7 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         return trap;
     }
 
-    function newPlateData() {
+    function newSingleConfigData() {
         return {
             doors: {},
             msgOn: "",
@@ -168,13 +168,13 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
     /* ---------- state ---------- */
     function ensureState() {
         state[STATE] = state[STATE] || {
-            plates: {},        // plateId -> { doors: { doorId: 'lock'|'secret' }, msgOn, msgOff, lastActive }
-            groups: {},        // groupName -> { required, plates[], doors{}, locked, lockFreeze, cfgLocked, autoLock, hasTriggered, msgOn, msgOff, lastActive }
-            mechanisms: {},    // mechanismId -> normalized internal model for singles/groups
+            plates: {},        // legacy single-source config store
+            groups: {},        // legacy multi-source config store
+            mechanisms: {},    // mechanismId -> normalized internal model for all mechanisms
             uiPageId: null,
             last: 0,
-            editOverride: {},  // groupName -> expiry timestamp
-            lockedTokens: {}   // tokenId -> { plateId, left, top, pageId, marker }
+            editOverride: {},  // mechanismName -> expiry timestamp
+            lockedTokens: {}   // tokenId -> { sourceId, left, top, pageId, marker }
         };
 
         var st = state[STATE];
@@ -226,9 +226,9 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         return st;
     }
 
-    function ensurePlateData(plateId) {
+    function ensureSingleConfigData(plateId) {
         var st = ensureState();
-        st.plates[plateId] = st.plates[plateId] || newPlateData();
+        st.plates[plateId] = st.plates[plateId] || newSingleConfigData();
 
         var p = st.plates[plateId];
         if (!p.doors) p.doors = {};
@@ -241,12 +241,12 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         return p;
     }
 
-    function mechanismIdForPlate(plateId) {
+    function singleMechanismId(plateId) {
         return "single:" + plateId;
     }
 
-    function mechanismIdForGroup(groupName) {
-        return "group:" + groupName;
+    function multiMechanismId(mechanismName) {
+        return "group:" + mechanismName;
     }
 
     function cloneDoorModes(doors) {
@@ -273,10 +273,10 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         return "";
     }
 
-    function syncMechanismFromPlate(plateId) {
+    function syncSingleMechanismFromLegacy(plateId) {
         var plate = getObj("graphic", plateId);
-        var pdata = ensurePlateData(plateId);
-        var mechId = mechanismIdForPlate(plateId);
+        var pdata = ensureSingleConfigData(plateId);
+        var mechId = singleMechanismId(plateId);
         var mech = ensureMechanismData(mechId);
 
         mech.kind = "single";
@@ -303,23 +303,23 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         return mech;
     }
 
-    function syncMechanismFromGroup(groupName) {
+    function syncMultiMechanismFromLegacy(mechanismName) {
         var st = ensureState();
-        var g = st.groups[groupName];
+        var g = st.groups[mechanismName];
         if (!g) return null;
 
-        var mechId = mechanismIdForGroup(groupName);
+        var mechId = multiMechanismId(mechanismName);
         var mech = ensureMechanismData(mechId);
         var mode = (parseInt(g.required, 10) === 0) ? "all" : "kofn";
 
         mech.kind = "group";
-        mech.legacyId = groupName;
+        mech.legacyId = mechanismName;
         mech.sourceKind = "pressurePlate";
-        mech.name = groupName;
+        mech.name = mechanismName;
         mech.pageId = inferMechanismPageId(g.plates || []);
         mech.sources = (g.plates || []).slice();
         mech.rule.mode = mode;
-        mech.rule.k = clampRequired(g);
+        mech.rule.k = clampRequiredSources(g);
         mech.rule.timing = "press";
         mech.effects.doors = cloneDoorModes(g.doors);
         mech.effects.trap = null;
@@ -345,15 +345,15 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
 
         for (pid in st.plates) {
             if (!st.plates.hasOwnProperty(pid)) continue;
-            mechId = mechanismIdForPlate(pid);
-            syncMechanismFromPlate(pid);
+            mechId = singleMechanismId(pid);
+            syncSingleMechanismFromLegacy(pid);
             keep[mechId] = true;
         }
 
         for (gname in st.groups) {
             if (!st.groups.hasOwnProperty(gname)) continue;
-            mechId = mechanismIdForGroup(gname);
-            syncMechanismFromGroup(gname);
+            mechId = multiMechanismId(gname);
+            syncMultiMechanismFromLegacy(gname);
             keep[mechId] = true;
         }
 
@@ -409,8 +409,8 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         }, 1200);
     }
 
-    function cmdPingPlate(playerid, plateId) {
-        var p = getObj("graphic", plateId);
+    function cmdPingSource(playerid, sourceId) {
+        var p = getObj("graphic", sourceId);
         if (!p) return whisper("Trigger not found.");
         pingGraphic(p, playerid);
     }
@@ -430,13 +430,13 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         return findObjs({ _type: "graphic", _subtype: "token", layer: "objects", _pageid: pageId }) || [];
     }
 
-    function isPlateOccupied(plateGraphic) {
-        return plateOccupants(plateGraphic).length > 0;
+    function isSourceOccupied(sourceGraphic) {
+        return sourceOccupants(sourceGraphic).length > 0;
     }
 
-    function plateOccupants(plateGraphic) {
-        var pr = rect(plateGraphic);
-        var toks = tokensOnObjectsLayer(plateGraphic.get("_pageid"));
+    function sourceOccupants(sourceGraphic) {
+        var pr = rect(sourceGraphic);
+        var toks = tokensOnObjectsLayer(sourceGraphic.get("_pageid"));
         var hits = [];
         for (var i = 0; i < toks.length; i++) {
             if (fullyInside(pr, rect(toks[i]))) hits.push(toks[i]);
@@ -558,12 +558,12 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         token.set({ statusmarkers: out.join(",") });
     }
 
-    function lockTokenToCurrentPosition(token, plateId, marker) {
+    function lockTokenToCurrentPosition(token, sourceId, marker) {
         if (!token) return;
 
         var st = ensureState();
         st.lockedTokens[token.id] = {
-            plateId: plateId,
+            sourceId: sourceId,
             left: token.get("left"),
             top: token.get("top"),
             pageId: token.get("_pageid"),
@@ -573,9 +573,9 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         if (marker) applyMarkersToToken(token, [marker]);
     }
 
-    function maybeApplyLockEffect(plateId, trap, tokens) {
+    function maybeApplyLockEffect(sourceId, trap, tokens) {
         if (!trap.effects || !trap.effects.lockToken) return;
-        for (var i = 0; i < tokens.length; i++) lockTokenToCurrentPosition(tokens[i], plateId, trap.effects.lockMarker);
+        for (var i = 0; i < tokens.length; i++) lockTokenToCurrentPosition(tokens[i], sourceId, trap.effects.lockMarker);
     }
 
     function unlockTokenById(tokenId) {
@@ -589,25 +589,25 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         return true;
     }
 
-    function unlockTokensForPlate(plateId) {
+    function unlockTokensForSource(sourceId) {
         var st = ensureState();
         var count = 0;
 
         for (var tokenId in st.lockedTokens) {
             if (!st.lockedTokens.hasOwnProperty(tokenId)) continue;
-            if (st.lockedTokens[tokenId].plateId !== plateId) continue;
+            if (st.lockedTokens[tokenId].sourceId !== sourceId) continue;
             if (unlockTokenById(tokenId)) count++;
         }
 
         return count;
     }
 
-    function lockedCountForPlate(plateId) {
+    function lockedCountForSource(sourceId) {
         var st = ensureState();
         var count = 0;
         for (var tokenId in st.lockedTokens) {
             if (!st.lockedTokens.hasOwnProperty(tokenId)) continue;
-            if (st.lockedTokens[tokenId].plateId === plateId) count++;
+            if (st.lockedTokens[tokenId].sourceId === sourceId) count++;
         }
         return count;
     }
@@ -771,7 +771,7 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         for (var i = 0; i < mech.sources.length; i++) {
             var source = getObj("graphic", mech.sources[i]);
             if (!source) continue;
-            if (isPlateOccupied(source)) count++;
+            if (isSourceOccupied(source)) count++;
         }
         return count;
     }
@@ -787,7 +787,7 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
     function syncLegacyFromMechanism(mech) {
         var st = ensureState();
         if (mech.kind === "single") {
-            var pdata = ensurePlateData(mech.legacyId);
+            var pdata = ensureSingleConfigData(mech.legacyId);
             pdata.doors = cloneDoorModes(mech.effects.doors);
             pdata.msgOn = mech.messages.on;
             pdata.msgOff = mech.messages.off;
@@ -819,8 +819,8 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
             var plate = getObj("graphic", mech.sources[0]);
             if (!plate) return;
 
-            var pdata = ensurePlateData(mech.legacyId);
-            var occupants = plateOccupants(plate);
+            var pdata = ensureSingleConfigData(mech.legacyId);
+            var occupants = sourceOccupants(plate);
             var prevOccupants = getGraphicsByIds(mech.runtime.lastOccupants);
             var wasActive = !!mech.runtime.lastActive;
             var occ = occupants.length > 0;
@@ -848,7 +848,7 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
             return;
         }
 
-        pruneGroup({
+        pruneMechanismSourcesAndDoors({
             plates: mech.sources,
             doors: mech.effects.doors
         });
@@ -886,12 +886,12 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         syncLegacyFromMechanism(mech);
     }
 
-    function evaluatePlate(plateId) {
-        evaluateMechanism(syncMechanismFromPlate(plateId));
+    function evaluateSingleMechanism(plateId) {
+        evaluateMechanism(syncSingleMechanismFromLegacy(plateId));
     }
 
     /* ---------- evaluation: groups ---------- */
-    function pruneGroup(g) {
+    function pruneMechanismSourcesAndDoors(g) {
         // plates
         var cleanedPlates = [];
         for (var i = 0; i < g.plates.length; i++) {
@@ -908,18 +908,18 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         g.doors = cleanedDoors;
     }
 
-    function groupPressedCount(group) {
+    function countPressedGroupSources(group) {
         var count = 0;
         for (var i = 0; i < group.plates.length; i++) {
             var pid = group.plates[i];
             var plate = getObj("graphic", pid);
             if (!plate) continue;
-            if (isPlateOccupied(plate)) count++;
+            if (isSourceOccupied(plate)) count++;
         }
         return count;
     }
 
-    function clampRequired(g) {
+    function clampRequiredSources(g) {
         var n = g.plates.length;
         var req = parseInt(g.required, 10);
         if (isNaN(req) || req < 0) req = 0; // 0 => ALL
@@ -928,8 +928,8 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         return req;
     }
 
-    function evaluateGroup(groupName) {
-        evaluateMechanism(syncMechanismFromGroup(groupName));
+    function evaluateMultiSourceMechanism(mechanismName) {
+        evaluateMechanism(syncMultiMechanismFromLegacy(mechanismName));
     }
 
     function evaluateAll() {
@@ -970,24 +970,24 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
     }
 
     /* ---------- config lock enforcement ---------- */
-    function hasEditOverride(groupName) {
+    function hasMechanismEditOverride(mechanismName) {
         var st = ensureState();
-        var exp = st.editOverride[groupName];
+        var exp = st.editOverride[mechanismName];
         if (!exp) return false;
         if (Date.now() > exp) {
-            delete st.editOverride[groupName];
+            delete st.editOverride[mechanismName];
             return false;
         }
         return true;
     }
 
-    function requireConfigEditable(groupName) {
+    function requireMechanismConfigEditable(mechanismName) {
         var st = ensureState();
-        var g = st.groups[groupName];
+        var g = st.groups[mechanismName];
         if (!g) return true;
         if (!g.cfgLocked) return true;
-        if (hasEditOverride(groupName)) return true;
-        whisper("Group <b>" + esc(groupName) + "</b> is <b>CONFIG LOCKED</b>. Use <b>Override</b> to edit for 60s.");
+        if (hasMechanismEditOverride(mechanismName)) return true;
+        whisper("Group <b>" + esc(mechanismName) + "</b> is <b>CONFIG LOCKED</b>. Use <b>Override</b> to edit for 60s.");
         return false;
     }
 
@@ -1036,7 +1036,7 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
     }
 
     /* ---------- group ops ---------- */
-    function getOrCreateGroup(name) {
+    function getOrCreateLegacyMultiConfig(name) {
         var st = ensureState();
         st.groups[name] = st.groups[name] || {
             required: 0,
@@ -1073,10 +1073,71 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         return g;
     }
 
-    function groupAddPlateId(g, plateId) {
-        for (var i = 0; i < g.plates.length; i++) if (g.plates[i] === plateId) return false;
-        g.plates.push(plateId);
+    function getSingleMechanism(plateId) {
+        ensureSingleConfigData(plateId);
+        return syncSingleMechanismFromLegacy(plateId);
+    }
+
+    function getGroupMechanism(name, createMissing) {
+        if (createMissing) getOrCreateLegacyMultiConfig(name);
+        return syncMultiMechanismFromLegacy(name);
+    }
+
+    function commitMechanism(mech) {
+        if (!mech) return null;
+        ensureState().mechanisms[mech.id] = mech;
+        syncLegacyFromMechanism(mech);
+        return mech;
+    }
+
+    function updateSingleMechanism(plateId, mutator) {
+        var mech = getSingleMechanism(plateId);
+        if (!mech) return null;
+        mutator(mech);
+        return commitMechanism(mech);
+    }
+
+    function updateGroupMechanism(name, createMissing, mutator) {
+        var mech = getGroupMechanism(name, createMissing);
+        if (!mech) return null;
+        mutator(mech);
+        return commitMechanism(mech);
+    }
+
+    function mechanismAddSource(mech, sourceId) {
+        for (var i = 0; i < mech.sources.length; i++) {
+            if (mech.sources[i] === sourceId) return false;
+        }
+        mech.sources.push(sourceId);
+        if (mech.rule.mode === "single") mech.rule.k = 1;
         return true;
+    }
+
+    function mechanismRemoveSource(mech, sourceId) {
+        var out = [];
+        var removed = false;
+
+        for (var i = 0; i < mech.sources.length; i++) {
+            if (mech.sources[i] === sourceId) {
+                removed = true;
+                continue;
+            }
+            out.push(mech.sources[i]);
+        }
+
+        mech.sources = out;
+        if (mech.rule.mode === "all") mech.rule.k = mech.sources.length;
+        else if (mech.rule.k > mech.sources.length) mech.rule.k = mech.sources.length;
+        if (mech.rule.mode === "single") mech.rule.k = 1;
+        return removed;
+    }
+
+    function mechanismAddDoor(mech, doorId, mode) {
+        mech.effects.doors[doorId] = mode;
+    }
+
+    function mechanismRemoveDoor(mech, doorId) {
+        delete mech.effects.doors[doorId];
     }
 
     function describeTeleportDestination(trap) {
@@ -1153,7 +1214,7 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
 
                 o.set({ name: newName });
 
-                ensurePlateData(o.id);
+                ensureSingleConfigData(o.id);
             }
         }
 
@@ -1169,7 +1230,6 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
             return;
         }
 
-        var st = ensureState();
         var sel = msg.selected || [];
         var plate = null;
         var doors = [];
@@ -1184,69 +1244,70 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         if (!plate) { whisper("Select a plate token (GM layer) and one or more Door objects."); return; }
         if (!doors.length) { whisper("No Door objects selected (must be Door tool doors)."); return; }
 
-        ensurePlateData(plate.id);
-        for (var d = 0; d < doors.length; d++) st.plates[plate.id].doors[doors[d].id] = mode;
+        updateSingleMechanism(plate.id, function (mech) {
+            for (var d = 0; d < doors.length; d++) mechanismAddDoor(mech, doors[d].id, mode);
+        });
 
-        evaluatePlate(plate.id);
+        evaluateSingleMechanism(plate.id);
         renderUI(msg.playerid);
     }
 
     function cmdSimOpen(plateId) {
-        var st = ensureState();
-        var pdata = st.plates[plateId];
-        if (!pdata || !pdata.doors) return;
-        for (var doorId in pdata.doors) {
-            if (!pdata.doors.hasOwnProperty(doorId)) continue;
-            applyOccupied(getObj("door", doorId), pdata.doors[doorId]);
+        var mech = getSingleMechanism(plateId);
+        if (!mech) return;
+        for (var doorId in mech.effects.doors) {
+            if (!mech.effects.doors.hasOwnProperty(doorId)) continue;
+            applyOccupied(getObj("door", doorId), mech.effects.doors[doorId]);
         }
     }
 
     function cmdSimClose(plateId) {
-        var st = ensureState();
-        var pdata = st.plates[plateId];
-        if (!pdata || !pdata.doors) return;
-        for (var doorId in pdata.doors) {
-            if (!pdata.doors.hasOwnProperty(doorId)) continue;
-            applyUnoccupied(getObj("door", doorId), pdata.doors[doorId]);
+        var mech = getSingleMechanism(plateId);
+        if (!mech) return;
+        for (var doorId in mech.effects.doors) {
+            if (!mech.effects.doors.hasOwnProperty(doorId)) continue;
+            applyUnoccupied(getObj("door", doorId), mech.effects.doors[doorId]);
         }
     }
 
-    function cmdRemovePlate(plateId) {
+    function cmdRemoveSingleMechanism(plateId) {
         var st = ensureState();
-        unlockTokensForPlate(plateId);
+        unlockTokensForSource(plateId);
         delete st.plates[plateId];
+        delete st.mechanisms[singleMechanismId(plateId)];
 
         // Also remove it from any groups
         for (var gname in st.groups) {
             if (!st.groups.hasOwnProperty(gname)) continue;
-            var g = st.groups[gname];
-            var out = [];
-            for (var i = 0; i < g.plates.length; i++) if (g.plates[i] !== plateId) out.push(g.plates[i]);
-            g.plates = out;
+            updateGroupMechanism(gname, false, function (mech) {
+                mechanismRemoveSource(mech, plateId);
+            });
         }
     }
 
-    function cmdSetPlateMsgOn(plateId, msgText) {
-        var p = ensurePlateData(plateId);
-        p.msgOn = String(msgText || "");
+    function cmdSetSingleMessageOn(plateId, msgText) {
+        updateSingleMechanism(plateId, function (mech) {
+            mech.messages.on = String(msgText || "");
+        });
         whisper("Trigger …" + esc(shortId(plateId)) + " trigger message set.");
     }
 
-    function cmdSetPlateMsgOff(plateId, msgText) {
-        var p = ensurePlateData(plateId);
-        p.msgOff = String(msgText || "");
+    function cmdSetSingleMessageOff(plateId, msgText) {
+        updateSingleMechanism(plateId, function (mech) {
+            mech.messages.off = String(msgText || "");
+        });
         whisper("Trigger …" + esc(shortId(plateId)) + " release message set.");
     }
 
     function cmdTrapToggle(plateId) {
-        var p = ensurePlateData(plateId);
-        p.trap.enabled = !p.trap.enabled;
-        if (p.trap.enabled && p.trap.type === "none") p.trap.type = "alarm";
-        whisper("Trigger …" + esc(shortId(plateId)) + " trap is now " + (p.trap.enabled ? "<b>ENABLED</b>" : "<b>DISABLED</b>") + ".");
+        var mech = updateSingleMechanism(plateId, function (mech) {
+            mech.effects.trap.enabled = !mech.effects.trap.enabled;
+            if (mech.effects.trap.enabled && mech.effects.trap.type === "none") mech.effects.trap.type = "alarm";
+        });
+        whisper("Trigger …" + esc(shortId(plateId)) + " trap is now " + (mech.effects.trap.enabled ? "<b>ENABLED</b>" : "<b>DISABLED</b>") + ".");
     }
 
     function cmdTrapType(plateId, type) {
-        var p = ensurePlateData(plateId);
         type = String(type || "").toLowerCase();
 
         if (!TRAP_TYPES[type]) {
@@ -1254,13 +1315,14 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
             return;
         }
 
-        p.trap.type = type;
-        p.trap.enabled = (type !== "none");
+        updateSingleMechanism(plateId, function (mech) {
+            mech.effects.trap.type = type;
+            mech.effects.trap.enabled = (type !== "none");
+        });
         whisper("Trigger …" + esc(shortId(plateId)) + " trap type set to <b>" + esc(trapTypeLabel(type).toUpperCase()) + "</b>.");
     }
 
     function cmdTrapTrigger(plateId, trigger) {
-        var p = ensurePlateData(plateId);
         trigger = String(trigger || "").toLowerCase();
 
         if (!TRAP_TRIGGERS[trigger]) {
@@ -1268,86 +1330,99 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
             return;
         }
 
-        p.trap.trigger = trigger;
+        updateSingleMechanism(plateId, function (mech) {
+            mech.rule.timing = trigger;
+            mech.effects.trap.trigger = trigger;
+        });
         whisper("Trigger …" + esc(shortId(plateId)) + " trap trigger set to <b>" + esc(trapTriggerLabel(trigger).toUpperCase()) + "</b>.");
     }
 
     function cmdTrapMessage(plateId, msgText) {
-        var p = ensurePlateData(plateId);
-        p.trap.message = String(msgText || "");
+        updateSingleMechanism(plateId, function (mech) {
+            mech.effects.trap.message = String(msgText || "");
+        });
         whisper("Trigger …" + esc(shortId(plateId)) + " trap message set.");
     }
 
     function cmdTrapDamage(plateId, dmgExpr) {
-        var p = ensurePlateData(plateId);
-        p.trap.damage = String(dmgExpr || "").trim() || "1d6";
-        whisper("Trigger …" + esc(shortId(plateId)) + " damage roll set to <b>" + esc(p.trap.damage) + "</b>.");
+        var mech = updateSingleMechanism(plateId, function (mech) {
+            mech.effects.trap.damage = String(dmgExpr || "").trim() || "1d6";
+        });
+        whisper("Trigger …" + esc(shortId(plateId)) + " damage roll set to <b>" + esc(mech.effects.trap.damage) + "</b>.");
     }
 
     function cmdTrapSaveLabel(plateId, label) {
-        var p = ensurePlateData(plateId);
-        p.trap.save.label = String(label || "").replace(/^\s+|\s+$/g, "").toUpperCase() || "DEX";
-        whisper("Trigger …" + esc(shortId(plateId)) + " save label set to <b>" + esc(p.trap.save.label) + "</b>.");
+        var mech = updateSingleMechanism(plateId, function (mech) {
+            mech.effects.trap.save.label = String(label || "").replace(/^\s+|\s+$/g, "").toUpperCase() || "DEX";
+        });
+        whisper("Trigger …" + esc(shortId(plateId)) + " save label set to <b>" + esc(mech.effects.trap.save.label) + "</b>.");
     }
 
     function cmdTrapSaveDc(plateId, dc) {
-        var p = ensurePlateData(plateId);
         dc = parseInt(dc, 10);
         if (isNaN(dc) || dc < 1) dc = 12;
-        p.trap.save.dc = dc;
+        updateSingleMechanism(plateId, function (mech) {
+            mech.effects.trap.save.dc = dc;
+        });
         whisper("Trigger …" + esc(shortId(plateId)) + " save DC set to <b>" + esc(String(dc)) + "</b>.");
     }
 
     function cmdTrapSaveSuccessMsg(plateId, msgText) {
-        var p = ensurePlateData(plateId);
-        p.trap.save.successMsg = String(msgText || "");
+        updateSingleMechanism(plateId, function (mech) {
+            mech.effects.trap.save.successMsg = String(msgText || "");
+        });
         whisper("Trigger …" + esc(shortId(plateId)) + " save success text set.");
     }
 
     function cmdTrapSaveFailMsg(plateId, msgText) {
-        var p = ensurePlateData(plateId);
-        p.trap.save.failMsg = String(msgText || "");
+        updateSingleMechanism(plateId, function (mech) {
+            mech.effects.trap.save.failMsg = String(msgText || "");
+        });
         whisper("Trigger …" + esc(shortId(plateId)) + " save fail text set.");
     }
 
     function cmdTrapSaveSuccessMode(plateId, mode) {
-        var p = ensurePlateData(plateId);
         mode = String(mode || "").toLowerCase();
         if (mode !== "half" && mode !== "none") {
             whisper("Save success must be <code>half</code> or <code>none</code>.");
             return;
         }
 
-        p.trap.save.successMode = mode;
+        updateSingleMechanism(plateId, function (mech) {
+            mech.effects.trap.save.successMode = mode;
+        });
         whisper("Trigger …" + esc(shortId(plateId)) + " save success set to <b>" + esc(mode.toUpperCase()) + "</b>.");
     }
 
     function cmdTrapSaveDamageType(plateId, dmgType) {
-        var p = ensurePlateData(plateId);
-        p.trap.save.damageType = String(dmgType || "").replace(/^\s+|\s+$/g, "");
+        updateSingleMechanism(plateId, function (mech) {
+            mech.effects.trap.save.damageType = String(dmgType || "").replace(/^\s+|\s+$/g, "");
+        });
         whisper("Trigger …" + esc(shortId(plateId)) + " save damage type set.");
     }
 
     function cmdTrapSaveFailDamage(plateId, dmgExpr) {
-        var p = ensurePlateData(plateId);
-        p.trap.save.failDamage = String(dmgExpr || "").replace(/^\s+|\s+$/g, "");
+        updateSingleMechanism(plateId, function (mech) {
+            mech.effects.trap.save.failDamage = String(dmgExpr || "").replace(/^\s+|\s+$/g, "");
+        });
         whisper("Trigger …" + esc(shortId(plateId)) + " save fail damage set.");
     }
 
     function cmdTrapStatusMarkers(plateId, markers) {
-        var p = ensurePlateData(plateId);
-        p.trap.status.markers = String(markers || "");
+        updateSingleMechanism(plateId, function (mech) {
+            mech.effects.trap.status.markers = String(markers || "");
+        });
         whisper("Trigger …" + esc(shortId(plateId)) + " status markers set.");
     }
 
     function cmdTrapStatusClearToggle(plateId) {
-        var p = ensurePlateData(plateId);
-        p.trap.status.clearOnRelease = !p.trap.status.clearOnRelease;
-        whisper("Trigger …" + esc(shortId(plateId)) + " clear-on-release is now " + (p.trap.status.clearOnRelease ? "<b>ON</b>" : "<b>OFF</b>") + ".");
+        var mech = updateSingleMechanism(plateId, function (mech) {
+            mech.effects.trap.status.clearOnRelease = !mech.effects.trap.status.clearOnRelease;
+        });
+        whisper("Trigger …" + esc(shortId(plateId)) + " clear-on-release is now " + (mech.effects.trap.status.clearOnRelease ? "<b>ON</b>" : "<b>OFF</b>") + ".");
     }
 
     function cmdTrapSetTeleport(msg, plateId) {
-        var p = ensurePlateData(plateId);
         var sel = msg.selected || [];
         var marker = null;
 
@@ -1365,23 +1440,25 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
             return;
         }
 
-        p.trap.teleport = {
-            pageId: marker.get("_pageid"),
-            left: marker.get("left"),
-            top: marker.get("top"),
-            name: marker.get("name") || ("Marker …" + shortId(marker.id))
-        };
+        updateSingleMechanism(plateId, function (mech) {
+            mech.effects.trap.teleport = {
+                pageId: marker.get("_pageid"),
+                left: marker.get("left"),
+                top: marker.get("top"),
+                name: marker.get("name") || ("Marker …" + shortId(marker.id))
+            };
+        });
         whisper("Teleport destination saved for trigger …" + esc(shortId(plateId)) + ".");
     }
 
     function cmdTrapClearTeleport(plateId) {
-        var p = ensurePlateData(plateId);
-        p.trap.teleport = defaultTrapConfig().teleport;
+        updateSingleMechanism(plateId, function (mech) {
+            mech.effects.trap.teleport = defaultTrapConfig().teleport;
+        });
         whisper("Teleport destination cleared for trigger …" + esc(shortId(plateId)) + ".");
     }
 
     function cmdTrapSetReveal(msg, plateId) {
-        var p = ensurePlateData(plateId);
         var sel = msg.selected || [];
         var refs = [];
 
@@ -1400,18 +1477,20 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
             return;
         }
 
-        p.trap.revealTargets = refs;
+        updateSingleMechanism(plateId, function (mech) {
+            mech.effects.trap.revealTargets = refs;
+        });
         whisper("Reveal targets saved for trigger …" + esc(shortId(plateId)) + ".");
     }
 
     function cmdTrapClearReveal(plateId) {
-        var p = ensurePlateData(plateId);
-        p.trap.revealTargets = [];
+        updateSingleMechanism(plateId, function (mech) {
+            mech.effects.trap.revealTargets = [];
+        });
         whisper("Reveal targets cleared for trigger …" + esc(shortId(plateId)) + ".");
     }
 
     function cmdTrapSetSpawn(msg, plateId) {
-        var p = ensurePlateData(plateId);
         var sel = msg.selected || [];
         var ids = [];
 
@@ -1427,47 +1506,55 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
             return;
         }
 
-        p.trap.spawnTargets = ids;
+        updateSingleMechanism(plateId, function (mech) {
+            mech.effects.trap.spawnTargets = ids;
+        });
         whisper("Spawn targets saved for trigger …" + esc(shortId(plateId)) + ".");
     }
 
     function cmdTrapClearSpawn(plateId) {
-        var p = ensurePlateData(plateId);
-        p.trap.spawnTargets = [];
+        updateSingleMechanism(plateId, function (mech) {
+            mech.effects.trap.spawnTargets = [];
+        });
         whisper("Spawn targets cleared for trigger …" + esc(shortId(plateId)) + ".");
     }
 
     function cmdTrapLockToggle(plateId) {
-        var p = ensurePlateData(plateId);
-        p.trap.effects.lockToken = !p.trap.effects.lockToken;
-        whisper("Trigger …" + esc(shortId(plateId)) + " lock-token effect is now " + (p.trap.effects.lockToken ? "<b>ON</b>" : "<b>OFF</b>") + ".");
+        var mech = updateSingleMechanism(plateId, function (mech) {
+            mech.effects.trap.effects.lockToken = !mech.effects.trap.effects.lockToken;
+        });
+        whisper("Trigger …" + esc(shortId(plateId)) + " lock-token effect is now " + (mech.effects.trap.effects.lockToken ? "<b>ON</b>" : "<b>OFF</b>") + ".");
     }
 
     function cmdTrapLockMarker(plateId, marker) {
-        var p = ensurePlateData(plateId);
-        p.trap.effects.lockMarker = String(marker || "").replace(/^\s+|\s+$/g, "");
+        updateSingleMechanism(plateId, function (mech) {
+            mech.effects.trap.effects.lockMarker = String(marker || "").replace(/^\s+|\s+$/g, "");
+        });
         whisper("Trigger …" + esc(shortId(plateId)) + " lock marker updated.");
     }
 
     function cmdTrapRevealToggle(plateId) {
-        var p = ensurePlateData(plateId);
-        p.trap.effects.revealAlso = !p.trap.effects.revealAlso;
-        whisper("Trigger …" + esc(shortId(plateId)) + " reveal effect is now " + (p.trap.effects.revealAlso ? "<b>ON</b>" : "<b>OFF</b>") + ".");
+        var mech = updateSingleMechanism(plateId, function (mech) {
+            mech.effects.trap.effects.revealAlso = !mech.effects.trap.effects.revealAlso;
+        });
+        whisper("Trigger …" + esc(shortId(plateId)) + " reveal effect is now " + (mech.effects.trap.effects.revealAlso ? "<b>ON</b>" : "<b>OFF</b>") + ".");
     }
 
     function cmdTrapUnlock(plateId) {
-        var count = unlockTokensForPlate(plateId);
+        var count = unlockTokensForSource(plateId);
         whisper("Unlocked <b>" + esc(String(count)) + "</b> token(s) for trigger …" + esc(shortId(plateId)) + ".");
     }
 
     function renderTrapUI(playerid, plateId) {
+        var mech = getSingleMechanism(plateId);
+        if (!mech) return whisper("Trigger not found.");
+
         var plate = getObj("graphic", plateId);
         if (!plate) return whisper("Trigger not found.");
 
-        var pdata = ensurePlateData(plateId);
-        var trap = pdata.trap;
-        var occ = isPlateOccupied(plate);
-        var name = plate.get("name") || ("Plate …" + shortId(plateId));
+        var trap = mech.effects.trap;
+        var occ = isSourceOccupied(plate);
+        var name = mechanismDisplayName(mech);
         var enabled = trap.enabled && trap.type !== "none";
         var triggerHint = enabled ? (trapTypeLabel(trap.type) + " / " + trapTriggerLabel(trap.trigger)) : "Disabled";
 
@@ -1593,7 +1680,7 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         html += '<div style="margin-top:4px;font-weight:900;">Reveal targets: <span style="color:#333;">' + esc(describeRevealTargets(trap)) + "</span></div>";
         html += '<div style="margin-top:8px;font-weight:900;">Lock effect: <span style="color:#333;">' + esc(trap.effects.lockToken ? "ON" : "OFF") + "</span></div>";
         html += '<div style="margin-top:4px;font-weight:900;">Lock marker: <span style="color:#333;">' + esc(String(trap.effects.lockMarker || "").trim() || "(none)") + "</span></div>";
-        html += '<div style="margin-top:4px;font-weight:900;">Locked tokens: <span style="color:#333;">' + esc(String(lockedCountForPlate(plateId))) + "</span></div>";
+        html += '<div style="margin-top:4px;font-weight:900;">Locked tokens: <span style="color:#333;">' + esc(String(lockedCountForSource(plateId))) + "</span></div>";
         html += "</div>";
 
         html += "</div></div>";
@@ -1601,14 +1688,15 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
     }
 
     /* ---------- commands: groups ---------- */
-    function cmdGroupMakeFromSelected(msg, name, required) {
+    function cmdCreateMultiMechanismFromSelected(msg, name, required) {
         if (!name) { whisper("Usage: <code>!mech groupmake NAME [K]</code>"); return; }
-        if (!requireConfigEditable(name)) return;
+        if (!requireMechanismConfigEditable(name)) return;
 
-        var g = getOrCreateGroup(name);
         required = parseInt(required, 10);
         if (isNaN(required) || required < 0) required = 0;
-        g.required = required;
+        var mech = getGroupMechanism(name, true);
+        mech.rule.mode = required === 0 ? "all" : "kofn";
+        mech.rule.k = required === 0 ? mech.sources.length : required;
 
         var sel = msg.selected || [];
         var added = 0;
@@ -1620,20 +1708,21 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
                 o.set({ layer: "gmlayer" });
                 if (!o.get("name")) o.set({ name: "Plate " + shortId(o.id) });
 
-                ensurePlateData(o.id);
-
-                if (groupAddPlateId(g, o.id)) added++;
+                ensureSingleConfigData(o.id);
+                if (mechanismAddSource(mech, o.id)) added++;
             }
         }
 
+        if (mech.rule.mode === "all") mech.rule.k = mech.sources.length;
+        commitMechanism(mech);
         whisper("Group <b>" + esc(name) + "</b> updated. Added <b>" + esc(String(added)) + "</b> plate(s).");
     }
 
-    function cmdGroupAddPlates(msg, name) {
+    function cmdAddSourcesToMultiMechanism(msg, name) {
         if (!name) { whisper("Usage: <code>!mech groupaddplates NAME</code>"); return; }
-        if (!requireConfigEditable(name)) return;
+        if (!requireMechanismConfigEditable(name)) return;
 
-        var g = getOrCreateGroup(name);
+        var mech = getGroupMechanism(name, true);
         var sel = msg.selected || [];
         var added = 0;
 
@@ -1644,18 +1733,19 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
                 o.set({ layer: "gmlayer" });
                 if (!o.get("name")) o.set({ name: "Plate " + shortId(o.id) });
 
-                ensurePlateData(o.id);
-
-                if (groupAddPlateId(g, o.id)) added++;
+                ensureSingleConfigData(o.id);
+                if (mechanismAddSource(mech, o.id)) added++;
             }
         }
 
+        if (mech.rule.mode === "all") mech.rule.k = mech.sources.length;
+        commitMechanism(mech);
         whisper("Added <b>" + esc(String(added)) + "</b> plate(s) to group <b>" + esc(name) + "</b>.");
     }
 
-    function cmdGroupAddDoors(msg, name, mode) {
+    function cmdAddDoorsToMultiMechanism(msg, name, mode) {
         if (!name) { whisper("Usage: <code>!mech groupadddoors NAME lock|secret</code>"); return; }
-        if (!requireConfigEditable(name)) return;
+        if (!requireMechanismConfigEditable(name)) return;
 
         mode = (mode || "").toLowerCase();
         if (mode !== "lock" && mode !== "secret") {
@@ -1663,7 +1753,7 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
             return;
         }
 
-        var g = getOrCreateGroup(name);
+        var mech = getGroupMechanism(name, true);
         var sel = msg.selected || [];
         var added = 0;
 
@@ -1671,60 +1761,58 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
             var o = getObj(sel[i]._type, sel[i]._id);
             if (!o) continue;
             if (o.get("_type") === "door") {
-                g.doors[o.id] = mode;
+                mechanismAddDoor(mech, o.id, mode);
                 added++;
             }
         }
 
+        commitMechanism(mech);
         whisper("Added <b>" + esc(String(added)) + "</b> door(s) to group <b>" + esc(name) + "</b> as <b>" + esc(mode.toUpperCase()) + "</b>.");
     }
 
-    function cmdGroupSetAll(name) {
-        if (!requireConfigEditable(name)) return;
-        var g = getOrCreateGroup(name);
-        g.required = 0;
+    function cmdSetMultiMechanismRequireAll(name) {
+        if (!requireMechanismConfigEditable(name)) return;
+        updateGroupMechanism(name, true, function (mech) {
+            mech.rule.mode = "all";
+            mech.rule.k = mech.sources.length;
+        });
         whisper("Group <b>" + esc(name) + "</b> now requires <b>ALL</b> plates.");
     }
 
-    function cmdGroupSetK(name, k) {
-        if (!requireConfigEditable(name)) return;
-        var g = getOrCreateGroup(name);
+    function cmdSetMultiMechanismRequiredCount(name, k) {
+        if (!requireMechanismConfigEditable(name)) return;
         k = parseInt(k, 10);
         if (isNaN(k) || k < 1) { whisper("K must be a number >= 1."); return; }
-        g.required = k;
+        updateGroupMechanism(name, true, function (mech) {
+            mech.rule.mode = "kofn";
+            mech.rule.k = k;
+        });
         whisper("Group <b>" + esc(name) + "</b> now requires <b>" + esc(String(k)) + "</b> plate(s).");
     }
 
     // Trigger lock toggle
-    function cmdToggleGroupLock(name) {
-        var st = ensureState();
-        var g = st.groups[name];
-        if (!g) return whisper("Group not found: " + esc(name));
-
-        // If it was frozen due to autoLock, unlocking clears freeze.
-        if (g.locked && g.lockFreeze) g.lockFreeze = false;
-
-        g.locked = !g.locked;
-
-        whisper("Group <b>" + esc(name) + "</b> is now " + (g.locked ? "<b>LOCKED</b> (mechanism disabled)" : "<b>UNLOCKED</b>") + ".");
+    function cmdToggleMechanismLock(name) {
+        var mech = updateGroupMechanism(name, false, function (mech) {
+            if (mech.locks.mechanismLocked && mech.locks.freezeWhenLocked) mech.locks.freezeWhenLocked = false;
+            mech.locks.mechanismLocked = !mech.locks.mechanismLocked;
+        });
+        if (!mech) return whisper("Group not found: " + esc(name));
+        whisper("Group <b>" + esc(name) + "</b> is now " + (mech.locks.mechanismLocked ? "<b>LOCKED</b> (mechanism disabled)" : "<b>UNLOCKED</b>") + ".");
     }
 
     // Config lock toggle
-    function cmdToggleGroupCfgLock(name) {
+    function cmdToggleMechanismConfigLock(name) {
         var st = ensureState();
-        var g = st.groups[name];
-        if (!g) return whisper("Group not found: " + esc(name));
-
-        g.cfgLocked = !g.cfgLocked;
-
-        // Clear any override when locking
-        if (g.cfgLocked) delete st.editOverride[name];
-
-        whisper("Group <b>" + esc(name) + "</b> config is now " + (g.cfgLocked ? "<b>CONFIG LOCKED</b>" : "<b>CONFIG UNLOCKED</b>") + ".");
+        var mech = updateGroupMechanism(name, false, function (mech) {
+            mech.locks.configLocked = !mech.locks.configLocked;
+        });
+        if (!mech) return whisper("Group not found: " + esc(name));
+        if (mech.locks.configLocked) delete st.editOverride[name];
+        whisper("Group <b>" + esc(name) + "</b> config is now " + (mech.locks.configLocked ? "<b>CONFIG LOCKED</b>" : "<b>CONFIG UNLOCKED</b>") + ".");
     }
 
     // GM override for config lock (60s)
-    function cmdGroupOverride(name) {
+    function cmdEnableMechanismOverride(name) {
         var st = ensureState();
         var g = st.groups[name];
         if (!g) return whisper("Group not found: " + esc(name));
@@ -1734,75 +1822,68 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
     }
 
     // Auto-lock toggle
-    function cmdToggleGroupAutoLock(name) {
-        if (!requireConfigEditable(name)) return;
+    function cmdToggleMechanismAutoLock(name) {
+        if (!requireMechanismConfigEditable(name)) return;
 
-        var st = ensureState();
-        var g = st.groups[name];
-        if (!g) return whisper("Group not found: " + esc(name));
-
-        g.autoLock = !g.autoLock;
-
-        whisper("Group <b>" + esc(name) + "</b> Auto-lock after first trigger is now " + (g.autoLock ? "<b>ON</b>" : "<b>OFF</b>") + ".");
+        var mech = updateGroupMechanism(name, false, function (mech) {
+            mech.locks.autoLock = !mech.locks.autoLock;
+        });
+        if (!mech) return whisper("Group not found: " + esc(name));
+        whisper("Group <b>" + esc(name) + "</b> Auto-lock after first trigger is now " + (mech.locks.autoLock ? "<b>ON</b>" : "<b>OFF</b>") + ".");
     }
 
-    function cmdGroupResetTrigger(name) {
-        if (!requireConfigEditable(name)) return;
-        var st = ensureState();
-        var g = st.groups[name];
-        if (!g) return whisper("Group not found: " + esc(name));
-
-        g.hasTriggered = false;
-
-        // If it was frozen due to auto-lock, clear that too.
-        if (g.locked && g.lockFreeze) {
-            g.locked = false;
-            g.lockFreeze = false;
-        }
-
+    function cmdResetMechanismTriggerState(name) {
+        if (!requireMechanismConfigEditable(name)) return;
+        var mech = updateGroupMechanism(name, false, function (mech) {
+            mech.locks.hasTriggered = false;
+            if (mech.locks.mechanismLocked && mech.locks.freezeWhenLocked) {
+                mech.locks.mechanismLocked = false;
+                mech.locks.freezeWhenLocked = false;
+            }
+        });
+        if (!mech) return whisper("Group not found: " + esc(name));
         whisper("Group <b>" + esc(name) + "</b> trigger state reset (hasTriggered = false).");
     }
 
-    function cmdGroupRemove(name) {
+    function cmdRemoveMultiMechanism(name) {
         var st = ensureState();
         delete st.groups[name];
+        delete st.mechanisms[multiMechanismId(name)];
         delete st.editOverride[name];
         whisper("Removed group <b>" + esc(name) + "</b>.");
     }
 
-    function cmdGroupDelPlate(name, plateId) {
-        if (!requireConfigEditable(name)) return;
-        var st = ensureState();
-        var g = st.groups[name];
-        if (!g) return;
-
-        var out = [];
-        for (var i = 0; i < g.plates.length; i++) if (g.plates[i] !== plateId) out.push(g.plates[i]);
-        g.plates = out;
+    function cmdRemoveSourceFromMultiMechanism(name, plateId) {
+        if (!requireMechanismConfigEditable(name)) return;
+        var mech = updateGroupMechanism(name, false, function (mech) {
+            mechanismRemoveSource(mech, plateId);
+        });
+        if (!mech) return;
         whisper("Removed plate …" + esc(shortId(plateId)) + " from group <b>" + esc(name) + "</b>.");
     }
 
-    function cmdGroupDelDoor(name, doorId) {
-        if (!requireConfigEditable(name)) return;
-        var st = ensureState();
-        var g = st.groups[name];
-        if (!g) return;
-
-        delete g.doors[doorId];
+    function cmdRemoveDoorFromMultiMechanism(name, doorId) {
+        if (!requireMechanismConfigEditable(name)) return;
+        var mech = updateGroupMechanism(name, false, function (mech) {
+            mechanismRemoveDoor(mech, doorId);
+        });
+        if (!mech) return;
         whisper("Detached door …" + esc(shortId(doorId)) + " from group <b>" + esc(name) + "</b>.");
     }
 
-    function cmdSetGroupMsgOn(name, msgText) {
-        if (!requireConfigEditable(name)) return;
-        var g = getOrCreateGroup(name);
-        g.msgOn = String(msgText || "");
+    function cmdSetMultiMechanismMessageOn(name, msgText) {
+        if (!requireMechanismConfigEditable(name)) return;
+        updateGroupMechanism(name, true, function (mech) {
+            mech.messages.on = String(msgText || "");
+        });
         whisper("Group <b>" + esc(name) + "</b> trigger message set.");
     }
 
-    function cmdSetGroupMsgOff(name, msgText) {
-        if (!requireConfigEditable(name)) return;
-        var g = getOrCreateGroup(name);
-        g.msgOff = String(msgText || "");
+    function cmdSetMultiMechanismMessageOff(name, msgText) {
+        if (!requireMechanismConfigEditable(name)) return;
+        updateGroupMechanism(name, true, function (mech) {
+            mech.messages.off = String(msgText || "");
+        });
         whisper("Group <b>" + esc(name) + "</b> release message set.");
     }
 
@@ -1832,7 +1913,7 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         if (!mech) return false;
         if (mech.kind === "single") {
             var plate = getObj("graphic", mech.sources[0]);
-            return !!plate && isPlateOccupied(plate);
+            return !!plate && isSourceOccupied(plate);
         }
         if (mech.locks.mechanismLocked) return false;
         var required = mechanismRequiredCount(mech);
@@ -1940,7 +2021,7 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
             var lockIcon = mech.locks.mechanismLocked ? "🔒" : "🔓";
             var cfgIcon = mech.locks.configLocked ? "🧱" : "✏️";
             var autoIcon = mech.locks.autoLock ? "⭐" : "☆";
-            var overrideActive = mech.kind === "group" && hasEditOverride(mech.legacyId);
+            var overrideActive = mech.kind === "group" && hasMechanismEditOverride(mech.legacyId);
             var editBlocked = mech.kind === "group" && mech.locks.configLocked && !overrideActive;
             var lockText = mech.locks.mechanismLocked ? (mech.locks.freezeWhenLocked ? "FROZEN" : "LOCKED") : "UNLOCKED";
 
@@ -2029,7 +2110,7 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
                 var src = getObj("graphic", mech.sources[s]);
                 if (!src || src.get("_pageid") !== pageId) continue;
                 anySourceListed = true;
-                var srcOcc = isPlateOccupied(src);
+                var srcOcc = isSourceOccupied(src);
                 var srcName = src.get("name") || ("Trigger …" + shortId(src.id));
                 html += '<div style="margin-left:12px;margin-top:6px;font-weight:900;">' +
                     esc(srcName) + badge(srcOcc ? "DOWN" : "UP", srcOcc) +
@@ -2074,6 +2155,317 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         html += "</div></div>"; // body + shell
 
         whisper(html);
+    }
+
+    function showCommandHelp() {
+        whisper(
+            "Commands:<br>" +
+            "<code>!mech ui</code>, <code>!mech setpage</code>, <code>!mech make NAME</code>, <code>!mech add lock|secret</code>, <code>!mech check</code>, <code>!mech ping PLATEID</code><br>" +
+            "Trap UI:<br><code>!mech trapui PLATEID</code>, <code>!mech traptoggle PLATEID</code>, <code>!mech traptype PLATEID alarm|damage|teleport|reveal|save|status|spawn|none</code><br>" +
+            "<code>!mech traptrigger PLATEID press|release|both</code>, <code>!mech trapmsg PLATEID ...</code>, <code>!mech trapdamage PLATEID XdY</code><br>" +
+            "<code>!mech trapsavelabel PLATEID LABEL</code>, <code>!mech trapsavedc PLATEID DC</code>, <code>!mech trapsavesuccessmsg PLATEID ...</code>, <code>!mech trapsavefailmsg PLATEID ...</code><br>" +
+            "<code>!mech trapsavesuccess PLATEID half|none</code>, <code>!mech trapsavedmgtype PLATEID TYPE</code>, <code>!mech trapsavefaildmg PLATEID XdY</code>, <code>!mech trapstatusmarkers PLATEID marker1,marker2</code>, <code>!mech trapstatusclear PLATEID</code><br>" +
+            "<code>!mech trapsetteleport PLATEID</code>, <code>!mech trapclearteleport PLATEID</code>, <code>!mech trapsetreveal PLATEID</code>, <code>!mech trapclearreveal PLATEID</code>, <code>!mech traprevealtoggle PLATEID</code><br>" +
+            "<code>!mech trapsetspawn PLATEID</code>, <code>!mech trapclearspawn PLATEID</code>, <code>!mech traplocktoggle PLATEID</code>, <code>!mech traplockmarker PLATEID MARKER</code>, <code>!mech trapunlock PLATEID</code><br>" +
+            "Plate Messages:<br><code>!mech platemsgon PLATEID ...</code>, <code>!mech platemsgoff PLATEID ...</code><br>" +
+            "Groups:<br>" +
+            "<code>!mech grouplock NAME</code> (mechanism lock), <code>!mech groupcfglock NAME</code> (config lock), <code>!mech groupoverride NAME</code> (60s override)<br>" +
+            "<code>!mech groupautolock NAME</code>, <code>!mech groupreset NAME</code><br>" +
+            "<code>!mech groupmake NAME [K]</code>, <code>!mech groupaddplates NAME</code>, <code>!mech groupadddoors NAME lock|secret</code><br>" +
+            "<code>!mech groupmsgon NAME ...</code>, <code>!mech groupmsgoff NAME ...</code><br>" +
+            "<code>!mech groupdelplate NAME PLATEID</code>, <code>!mech groupdeldor NAME DOORID</code>, <code>!mech groupremove NAME</code>"
+        );
+    }
+
+    function handleUiCommands(msg, sub) {
+        if (sub === "ui") {
+            renderUI(msg.playerid);
+            return true;
+        }
+        if (sub === "setpage") {
+            setUIPage(msg.playerid);
+            renderUI(msg.playerid);
+            return true;
+        }
+        return false;
+    }
+
+    function handleSingleCommands(msg, sub, a, b, restFrom) {
+        if (sub === "make") {
+            cmdMakePlateFromSelected(msg, a);
+            return true;
+        }
+        if (sub === "add") {
+            cmdAddSingle(msg, a);
+            evaluateAll();
+            renderUI(msg.playerid);
+            return true;
+        }
+        if (sub === "check") {
+            evaluateAll();
+            renderUI(msg.playerid);
+            return true;
+        }
+        if (sub === "checkplate") {
+            if (a) evaluateSingleMechanism(a);
+            renderUI(msg.playerid);
+            return true;
+        }
+        if (sub === "simopen") {
+            if (a) cmdSimOpen(a);
+            evaluateAll();
+            renderUI(msg.playerid);
+            return true;
+        }
+        if (sub === "simclose") {
+            if (a) cmdSimClose(a);
+            evaluateAll();
+            renderUI(msg.playerid);
+            return true;
+        }
+        if (sub === "removeplate") {
+            if (a) cmdRemoveSingleMechanism(a);
+            evaluateAll();
+            renderUI(msg.playerid);
+            return true;
+        }
+        if (sub === "platemsgon") {
+            if (a) cmdSetSingleMessageOn(a, restFrom(3));
+            renderUI(msg.playerid);
+            return true;
+        }
+        if (sub === "platemsgoff") {
+            if (a) cmdSetSingleMessageOff(a, restFrom(3));
+            renderUI(msg.playerid);
+            return true;
+        }
+        if (sub === "ping") {
+            if (a) cmdPingSource(msg.playerid, a);
+            return true;
+        }
+        return false;
+    }
+
+    function handleTrapCommands(msg, sub, a, b, restFrom) {
+        if (sub === "trapui") {
+            if (a) renderTrapUI(msg.playerid, a);
+            return true;
+        }
+        if (sub === "traptoggle") {
+            if (a) cmdTrapToggle(a);
+            renderTrapUI(msg.playerid, a);
+            return true;
+        }
+        if (sub === "traptype") {
+            if (a) cmdTrapType(a, b);
+            renderTrapUI(msg.playerid, a);
+            return true;
+        }
+        if (sub === "traptrigger") {
+            if (a) cmdTrapTrigger(a, b);
+            renderTrapUI(msg.playerid, a);
+            return true;
+        }
+        if (sub === "trapmsg") {
+            if (a) cmdTrapMessage(a, restFrom(3));
+            renderTrapUI(msg.playerid, a);
+            return true;
+        }
+        if (sub === "trapdamage") {
+            if (a) cmdTrapDamage(a, restFrom(3));
+            renderTrapUI(msg.playerid, a);
+            return true;
+        }
+        if (sub === "trapsavelabel") {
+            if (a) cmdTrapSaveLabel(a, restFrom(3));
+            renderTrapUI(msg.playerid, a);
+            return true;
+        }
+        if (sub === "trapsavedc") {
+            if (a) cmdTrapSaveDc(a, b);
+            renderTrapUI(msg.playerid, a);
+            return true;
+        }
+        if (sub === "trapsavesuccessmsg") {
+            if (a) cmdTrapSaveSuccessMsg(a, restFrom(3));
+            renderTrapUI(msg.playerid, a);
+            return true;
+        }
+        if (sub === "trapsavefailmsg") {
+            if (a) cmdTrapSaveFailMsg(a, restFrom(3));
+            renderTrapUI(msg.playerid, a);
+            return true;
+        }
+        if (sub === "trapsavesuccess") {
+            if (a) cmdTrapSaveSuccessMode(a, b);
+            renderTrapUI(msg.playerid, a);
+            return true;
+        }
+        if (sub === "trapsavedmgtype") {
+            if (a) cmdTrapSaveDamageType(a, restFrom(3));
+            renderTrapUI(msg.playerid, a);
+            return true;
+        }
+        if (sub === "trapsavefaildmg") {
+            if (a) cmdTrapSaveFailDamage(a, restFrom(3));
+            renderTrapUI(msg.playerid, a);
+            return true;
+        }
+        if (sub === "trapstatusmarkers") {
+            if (a) cmdTrapStatusMarkers(a, restFrom(3));
+            renderTrapUI(msg.playerid, a);
+            return true;
+        }
+        if (sub === "trapstatusclear") {
+            if (a) cmdTrapStatusClearToggle(a);
+            renderTrapUI(msg.playerid, a);
+            return true;
+        }
+        if (sub === "trapsetteleport") {
+            if (a) cmdTrapSetTeleport(msg, a);
+            renderTrapUI(msg.playerid, a);
+            return true;
+        }
+        if (sub === "trapclearteleport") {
+            if (a) cmdTrapClearTeleport(a);
+            renderTrapUI(msg.playerid, a);
+            return true;
+        }
+        if (sub === "trapsetreveal") {
+            if (a) cmdTrapSetReveal(msg, a);
+            renderTrapUI(msg.playerid, a);
+            return true;
+        }
+        if (sub === "trapclearreveal") {
+            if (a) cmdTrapClearReveal(a);
+            renderTrapUI(msg.playerid, a);
+            return true;
+        }
+        if (sub === "traprevealtoggle") {
+            if (a) cmdTrapRevealToggle(a);
+            renderTrapUI(msg.playerid, a);
+            return true;
+        }
+        if (sub === "trapsetspawn") {
+            if (a) cmdTrapSetSpawn(msg, a);
+            renderTrapUI(msg.playerid, a);
+            return true;
+        }
+        if (sub === "trapclearspawn") {
+            if (a) cmdTrapClearSpawn(a);
+            renderTrapUI(msg.playerid, a);
+            return true;
+        }
+        if (sub === "traplocktoggle") {
+            if (a) cmdTrapLockToggle(a);
+            renderTrapUI(msg.playerid, a);
+            return true;
+        }
+        if (sub === "traplockmarker") {
+            if (a) cmdTrapLockMarker(a, restFrom(3));
+            renderTrapUI(msg.playerid, a);
+            return true;
+        }
+        if (sub === "trapunlock") {
+            if (a) cmdTrapUnlock(a);
+            renderTrapUI(msg.playerid, a);
+            return true;
+        }
+        return false;
+    }
+
+    function handleGroupCommands(msg, sub, a, b, restFrom) {
+        if (sub === "groupmake") {
+            cmdCreateMultiMechanismFromSelected(msg, a, b);
+            evaluateAll();
+            renderUI(msg.playerid);
+            return true;
+        }
+        if (sub === "groupaddplates") {
+            cmdAddSourcesToMultiMechanism(msg, a);
+            evaluateAll();
+            renderUI(msg.playerid);
+            return true;
+        }
+        if (sub === "groupadddoors") {
+            cmdAddDoorsToMultiMechanism(msg, a, b);
+            evaluateAll();
+            renderUI(msg.playerid);
+            return true;
+        }
+        if (sub === "groupsetall") {
+            cmdSetMultiMechanismRequireAll(a);
+            evaluateAll();
+            renderUI(msg.playerid);
+            return true;
+        }
+        if (sub === "groupsetk") {
+            cmdSetMultiMechanismRequiredCount(a, b);
+            evaluateAll();
+            renderUI(msg.playerid);
+            return true;
+        }
+        if (sub === "grouplock") {
+            cmdToggleMechanismLock(a);
+            evaluateAll();
+            renderUI(msg.playerid);
+            return true;
+        }
+        if (sub === "groupcfglock") {
+            cmdToggleMechanismConfigLock(a);
+            renderUI(msg.playerid);
+            return true;
+        }
+        if (sub === "groupoverride") {
+            cmdEnableMechanismOverride(a);
+            renderUI(msg.playerid);
+            return true;
+        }
+        if (sub === "groupautolock") {
+            cmdToggleMechanismAutoLock(a);
+            renderUI(msg.playerid);
+            return true;
+        }
+        if (sub === "groupreset") {
+            cmdResetMechanismTriggerState(a);
+            evaluateAll();
+            renderUI(msg.playerid);
+            return true;
+        }
+        if (sub === "groupremove") {
+            cmdRemoveMultiMechanism(a);
+            evaluateAll();
+            renderUI(msg.playerid);
+            return true;
+        }
+        if (sub === "groupcheck") {
+            evaluateMultiSourceMechanism(a);
+            renderUI(msg.playerid);
+            return true;
+        }
+        if (sub === "groupdelplate") {
+            cmdRemoveSourceFromMultiMechanism(a, b);
+            evaluateAll();
+            renderUI(msg.playerid);
+            return true;
+        }
+        if (sub === "groupdeldor") {
+            cmdRemoveDoorFromMultiMechanism(a, b);
+            evaluateAll();
+            renderUI(msg.playerid);
+            return true;
+        }
+        if (sub === "groupmsgon") {
+            if (a) cmdSetMultiMechanismMessageOn(a, restFrom(3));
+            renderUI(msg.playerid);
+            return true;
+        }
+        if (sub === "groupmsgoff") {
+            if (a) cmdSetMultiMechanismMessageOff(a, restFrom(3));
+            renderUI(msg.playerid);
+            return true;
+        }
+        return false;
     }
 
     /* ---------- events ---------- */
@@ -2129,91 +2521,12 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
             return msg.content.split(/\s+/).slice(n).join(" ");
         }
 
-        // UI / page
-        if (sub === "ui") return renderUI(msg.playerid);
-        if (sub === "setpage") { setUIPage(msg.playerid); return renderUI(msg.playerid); }
+        if (handleUiCommands(msg, sub)) return;
+        if (handleSingleCommands(msg, sub, a, b, restFrom)) return;
+        if (handleTrapCommands(msg, sub, a, b, restFrom)) return;
+        if (handleGroupCommands(msg, sub, a, b, restFrom)) return;
 
-        // Singles
-        if (sub === "make") return cmdMakePlateFromSelected(msg, a);
-        if (sub === "add") { cmdAddSingle(msg, a); evaluateAll(); return renderUI(msg.playerid); }
-        if (sub === "check") { evaluateAll(); return renderUI(msg.playerid); }
-        if (sub === "checkplate") { if (a) evaluatePlate(a); return renderUI(msg.playerid); }
-        if (sub === "simopen") { if (a) cmdSimOpen(a); evaluateAll(); return renderUI(msg.playerid); }
-        if (sub === "simclose") { if (a) cmdSimClose(a); evaluateAll(); return renderUI(msg.playerid); }
-        if (sub === "removeplate") { if (a) cmdRemovePlate(a); evaluateAll(); return renderUI(msg.playerid); }
-        if (sub === "trapui") { if (a) return renderTrapUI(msg.playerid, a); }
-        if (sub === "traptoggle") { if (a) cmdTrapToggle(a); return renderTrapUI(msg.playerid, a); }
-        if (sub === "traptype") { if (a) cmdTrapType(a, b); return renderTrapUI(msg.playerid, a); }
-        if (sub === "traptrigger") { if (a) cmdTrapTrigger(a, b); return renderTrapUI(msg.playerid, a); }
-        if (sub === "trapmsg") { if (a) cmdTrapMessage(a, restFrom(3)); return renderTrapUI(msg.playerid, a); }
-        if (sub === "trapdamage") { if (a) cmdTrapDamage(a, restFrom(3)); return renderTrapUI(msg.playerid, a); }
-        if (sub === "trapsavelabel") { if (a) cmdTrapSaveLabel(a, restFrom(3)); return renderTrapUI(msg.playerid, a); }
-        if (sub === "trapsavedc") { if (a) cmdTrapSaveDc(a, b); return renderTrapUI(msg.playerid, a); }
-        if (sub === "trapsavesuccessmsg") { if (a) cmdTrapSaveSuccessMsg(a, restFrom(3)); return renderTrapUI(msg.playerid, a); }
-        if (sub === "trapsavefailmsg") { if (a) cmdTrapSaveFailMsg(a, restFrom(3)); return renderTrapUI(msg.playerid, a); }
-        if (sub === "trapsavesuccess") { if (a) cmdTrapSaveSuccessMode(a, b); return renderTrapUI(msg.playerid, a); }
-        if (sub === "trapsavedmgtype") { if (a) cmdTrapSaveDamageType(a, restFrom(3)); return renderTrapUI(msg.playerid, a); }
-        if (sub === "trapsavefaildmg") { if (a) cmdTrapSaveFailDamage(a, restFrom(3)); return renderTrapUI(msg.playerid, a); }
-        if (sub === "trapstatusmarkers") { if (a) cmdTrapStatusMarkers(a, restFrom(3)); return renderTrapUI(msg.playerid, a); }
-        if (sub === "trapstatusclear") { if (a) cmdTrapStatusClearToggle(a); return renderTrapUI(msg.playerid, a); }
-        if (sub === "trapsetteleport") { if (a) cmdTrapSetTeleport(msg, a); return renderTrapUI(msg.playerid, a); }
-        if (sub === "trapclearteleport") { if (a) cmdTrapClearTeleport(a); return renderTrapUI(msg.playerid, a); }
-        if (sub === "trapsetreveal") { if (a) cmdTrapSetReveal(msg, a); return renderTrapUI(msg.playerid, a); }
-        if (sub === "trapclearreveal") { if (a) cmdTrapClearReveal(a); return renderTrapUI(msg.playerid, a); }
-        if (sub === "traprevealtoggle") { if (a) cmdTrapRevealToggle(a); return renderTrapUI(msg.playerid, a); }
-        if (sub === "trapsetspawn") { if (a) cmdTrapSetSpawn(msg, a); return renderTrapUI(msg.playerid, a); }
-        if (sub === "trapclearspawn") { if (a) cmdTrapClearSpawn(a); return renderTrapUI(msg.playerid, a); }
-        if (sub === "traplocktoggle") { if (a) cmdTrapLockToggle(a); return renderTrapUI(msg.playerid, a); }
-        if (sub === "traplockmarker") { if (a) cmdTrapLockMarker(a, restFrom(3)); return renderTrapUI(msg.playerid, a); }
-        if (sub === "trapunlock") { if (a) cmdTrapUnlock(a); return renderTrapUI(msg.playerid, a); }
-
-        // Plate messages (allow spaces)
-        if (sub === "platemsgon") { if (a) cmdSetPlateMsgOn(a, restFrom(3)); return renderUI(msg.playerid); }
-        if (sub === "platemsgoff") { if (a) cmdSetPlateMsgOff(a, restFrom(3)); return renderUI(msg.playerid); }
-
-        // Ping
-        if (sub === "ping") { if (a) cmdPingPlate(msg.playerid, a); return; }
-
-        // Groups
-        if (sub === "groupmake") { cmdGroupMakeFromSelected(msg, a, b); evaluateAll(); return renderUI(msg.playerid); }
-        if (sub === "groupaddplates") { cmdGroupAddPlates(msg, a); evaluateAll(); return renderUI(msg.playerid); }
-        if (sub === "groupadddoors") { cmdGroupAddDoors(msg, a, b); evaluateAll(); return renderUI(msg.playerid); }
-        if (sub === "groupsetall") { cmdGroupSetAll(a); evaluateAll(); return renderUI(msg.playerid); }
-        if (sub === "groupsetk") { cmdGroupSetK(a, b); evaluateAll(); return renderUI(msg.playerid); }
-
-        if (sub === "grouplock") { cmdToggleGroupLock(a); evaluateAll(); return renderUI(msg.playerid); }
-        if (sub === "groupcfglock") { cmdToggleGroupCfgLock(a); return renderUI(msg.playerid); }
-        if (sub === "groupoverride") { cmdGroupOverride(a); return renderUI(msg.playerid); }
-
-        if (sub === "groupautolock") { cmdToggleGroupAutoLock(a); return renderUI(msg.playerid); }
-        if (sub === "groupreset") { cmdGroupResetTrigger(a); evaluateAll(); return renderUI(msg.playerid); }
-
-        if (sub === "groupremove") { cmdGroupRemove(a); evaluateAll(); return renderUI(msg.playerid); }
-        if (sub === "groupcheck") { evaluateGroup(a); return renderUI(msg.playerid); }
-        if (sub === "groupdelplate") { cmdGroupDelPlate(a, b); evaluateAll(); return renderUI(msg.playerid); }
-        if (sub === "groupdeldor") { cmdGroupDelDoor(a, b); evaluateAll(); return renderUI(msg.playerid); }
-
-        // Group messages (allow spaces)
-        if (sub === "groupmsgon") { if (a) cmdSetGroupMsgOn(a, restFrom(3)); return renderUI(msg.playerid); }
-        if (sub === "groupmsgoff") { if (a) cmdSetGroupMsgOff(a, restFrom(3)); return renderUI(msg.playerid); }
-
-        whisper(
-            "Commands:<br>" +
-            "<code>!mech ui</code>, <code>!mech setpage</code>, <code>!mech make NAME</code>, <code>!mech add lock|secret</code>, <code>!mech check</code>, <code>!mech ping PLATEID</code><br>" +
-            "Trap UI:<br><code>!mech trapui PLATEID</code>, <code>!mech traptoggle PLATEID</code>, <code>!mech traptype PLATEID alarm|damage|teleport|reveal|save|status|spawn|none</code><br>" +
-            "<code>!mech traptrigger PLATEID press|release|both</code>, <code>!mech trapmsg PLATEID ...</code>, <code>!mech trapdamage PLATEID XdY</code><br>" +
-            "<code>!mech trapsavelabel PLATEID LABEL</code>, <code>!mech trapsavedc PLATEID DC</code>, <code>!mech trapsavesuccessmsg PLATEID ...</code>, <code>!mech trapsavefailmsg PLATEID ...</code><br>" +
-            "<code>!mech trapsavesuccess PLATEID half|none</code>, <code>!mech trapsavedmgtype PLATEID TYPE</code>, <code>!mech trapsavefaildmg PLATEID XdY</code>, <code>!mech trapstatusmarkers PLATEID marker1,marker2</code>, <code>!mech trapstatusclear PLATEID</code><br>" +
-            "<code>!mech trapsetteleport PLATEID</code>, <code>!mech trapclearteleport PLATEID</code>, <code>!mech trapsetreveal PLATEID</code>, <code>!mech trapclearreveal PLATEID</code>, <code>!mech traprevealtoggle PLATEID</code><br>" +
-            "<code>!mech trapsetspawn PLATEID</code>, <code>!mech trapclearspawn PLATEID</code>, <code>!mech traplocktoggle PLATEID</code>, <code>!mech traplockmarker PLATEID MARKER</code>, <code>!mech trapunlock PLATEID</code><br>" +
-            "Plate Messages:<br><code>!mech platemsgon PLATEID ...</code>, <code>!mech platemsgoff PLATEID ...</code><br>" +
-            "Groups:<br>" +
-            "<code>!mech grouplock NAME</code> (mechanism lock), <code>!mech groupcfglock NAME</code> (config lock), <code>!mech groupoverride NAME</code> (60s override)<br>" +
-            "<code>!mech groupautolock NAME</code>, <code>!mech groupreset NAME</code><br>" +
-            "<code>!mech groupmake NAME [K]</code>, <code>!mech groupaddplates NAME</code>, <code>!mech groupadddoors NAME lock|secret</code><br>" +
-            "<code>!mech groupmsgon NAME ...</code>, <code>!mech groupmsgoff NAME ...</code><br>" +
-            "<code>!mech groupdelplate NAME PLATEID</code>, <code>!mech groupdeldor NAME DOORID</code>, <code>!mech groupremove NAME</code>"
-        );
+        showCommandHelp();
     });
 
     on("ready", function () {
