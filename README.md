@@ -120,6 +120,62 @@ or
 
 !plate add secret
 
+Convert a Plate into a Trap
+
+Open the main UI:
+
+!plate ui
+
+Then click the trap button on a plate, or open the trap UI directly:
+
+!plate trapui PLATEID
+
+From the trap UI you can:
+
+Choose a trap type
+
+Choose whether it fires on press, release, or both
+
+Set a trap message
+
+Configure trap-specific settings like damage, save DC, markers, reveal targets, spawn targets, or teleport destination
+
+Optionally enable the lock-token effect
+
+Trap Setup Notes
+
+Teleport traps:
+
+Select one destination marker token/graphic, then use:
+
+!plate trapsetteleport PLATEID
+
+Reveal traps:
+
+Select one or more hidden graphics or secret doors, then use:
+
+!plate trapsetreveal PLATEID
+
+Spawn traps:
+
+Select one or more GM-layer graphics to reveal on trigger, then use:
+
+!plate trapsetspawn PLATEID
+
+Status traps:
+
+Use comma-separated Roll20 status marker names, for example:
+
+!plate trapstatusmarkers PLATEID cobweb,poisoned
+
+Lock token effect:
+
+When enabled, triggered token(s) are snapped back to their locked position until manually unlocked.
+
+Use:
+
+!plate trapunlock PLATEID
+
 Create a Group Puzzle
 
 Select multiple plate tokens:
@@ -259,6 +315,35 @@ Moves selected GM-layer spawn tokens to the objects layer when triggered.
 LOCK TOKEN EFFECT
 
 Optional extra trap effect that holds triggered token(s) in place until manually unlocked.
+
+Examples
+
+Dart trap with save-for-half
+
+!plate traptype PLATEID save
+!plate trapsavelabel PLATEID DEX
+!plate trapsavedc PLATEID 14
+!plate trapsavesuccessdmg PLATEID 1d4
+!plate trapsavefaildmg PLATEID 2d4
+!plate trapmsg PLATEID A volley of darts fires from the wall.
+
+Web snare trap
+
+!plate traptype PLATEID status
+!plate trapstatusmarkers PLATEID cobweb
+!plate traplocktoggle PLATEID
+!plate trapmsg PLATEID Sticky webbing erupts from the floor.
+
+Ambush spawn trap
+
+!plate traptype PLATEID spawn
+!plate trapmsg PLATEID Hidden attackers rush into the room.
+
+Backward Compatibility
+
+Existing pressure plates continue to work without conversion.
+
+Trap configuration is additive and uses backfilled defaults, so older saved plate data should remain valid after script updates.
 
 State Persistence
 
