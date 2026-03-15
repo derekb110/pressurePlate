@@ -142,6 +142,8 @@ Configure trap-specific settings like damage, save DC, markers, reveal targets, 
 
 Optionally enable the lock-token effect
 
+For non-reveal trap types, you can also enable reveal as an extra effect so a save, damage, or spawn trap can reveal hidden targets at the same time.
+
 Trap Setup Notes
 
 Teleport traps:
@@ -207,7 +209,8 @@ Command Reference
 !plate trapsavedc PLATEID DC
 !plate trapsavesuccessmsg PLATEID message...
 !plate trapsavefailmsg PLATEID message...
-!plate trapsavesuccessdmg PLATEID XdY
+!plate trapsavesuccess PLATEID half|none
+!plate trapsavedmgtype PLATEID TYPE
 !plate trapsavefaildmg PLATEID XdY
 !plate trapstatusmarkers PLATEID marker1,marker2
 !plate trapstatusclear PLATEID
@@ -215,6 +218,7 @@ Command Reference
 !plate trapclearteleport PLATEID
 !plate trapsetreveal PLATEID
 !plate trapclearreveal PLATEID
+!plate traprevealtoggle PLATEID
 !plate trapsetspawn PLATEID
 !plate trapclearspawn PLATEID
 !plate traplocktoggle PLATEID
@@ -300,9 +304,11 @@ REVEAL
 
 Reveals selected GM-layer graphics or secret doors.
 
+Reveal can also be used as an extra effect on non-reveal trap types.
+
 SAVE
 
-Prompts a save or check with configurable DC, messages, and optional success/fail damage.
+Prompts a save or check with configurable DC, messages, fail damage, damage type, and a success result of either half or none.
 
 STATUS
 
@@ -323,9 +329,21 @@ Dart trap with save-for-half
 !plate traptype PLATEID save
 !plate trapsavelabel PLATEID DEX
 !plate trapsavedc PLATEID 14
-!plate trapsavesuccessdmg PLATEID 1d4
+!plate trapsavesuccess PLATEID half
+!plate trapsavedmgtype PLATEID piercing
 !plate trapsavefaildmg PLATEID 2d4
 !plate trapmsg PLATEID A volley of darts fires from the wall.
+
+Reveal-and-save trap
+
+!plate traptype PLATEID save
+!plate traprevealtoggle PLATEID
+!plate trapsavelabel PLATEID DEX
+!plate trapsavedc PLATEID 15
+!plate trapsavesuccess PLATEID none
+!plate trapsavedmgtype PLATEID fire
+!plate trapsavefaildmg PLATEID 3d6
+!plate trapmsg PLATEID Flame jets burst from hidden wall vents.
 
 Web snare trap
 
