@@ -38,8 +38,9 @@ var PressurePlateDoors = PressurePlateDoors || (function () {
 
     var DEBOUNCE_MS = 120;
     var OVERRIDE_MS = 60000; // 60s config override
-    var TRAP_TYPES = { none: true, alarm: true, damage: true, teleport: true, reveal: true };
+    var TRAP_TYPES = { none: true, alarm: true, damage: true, teleport: true, reveal: true, save: true, status: true, spawn: true };
     var TRAP_TRIGGERS = { press: true, release: true, both: true };
+    var MOVE_LOCK_REENTRY = {};
 
     function defaultTrapConfig() {
         return {
@@ -48,13 +49,31 @@ var PressurePlateDoors = PressurePlateDoors || (function () {
             trigger: "press",
             message: "",
             damage: "1d6",
+            save: {
+                label: "DEX",
+                dc: 12,
+                successMsg: "",
+                failMsg: "",
+                successDamage: "",
+                failDamage: ""
+            },
+            status: {
+                markers: "cobweb",
+                clearOnRelease: false,
+                lastTargets: []
+            },
             teleport: {
                 pageId: "",
                 left: 0,
                 top: 0,
                 name: ""
             },
-            revealTargets: []
+            revealTargets: [],
+            spawnTargets: [],
+            effects: {
+                lockToken: false,
+                lockMarker: "fishing-net"
+            }
         };
     }
 
@@ -67,6 +86,19 @@ var PressurePlateDoors = PressurePlateDoors || (function () {
         if (typeof trap.message === "undefined") trap.message = "";
         if (typeof trap.damage === "undefined") trap.damage = "1d6";
 
+        trap.save = trap.save || {};
+        if (typeof trap.save.label === "undefined") trap.save.label = "DEX";
+        if (typeof trap.save.dc === "undefined") trap.save.dc = 12;
+        if (typeof trap.save.successMsg === "undefined") trap.save.successMsg = "";
+        if (typeof trap.save.failMsg === "undefined") trap.save.failMsg = "";
+        if (typeof trap.save.successDamage === "undefined") trap.save.successDamage = "";
+        if (typeof trap.save.failDamage === "undefined") trap.save.failDamage = "";
+
+        trap.status = trap.status || {};
+        if (typeof trap.status.markers === "undefined") trap.status.markers = "cobweb";
+        if (typeof trap.status.clearOnRelease === "undefined") trap.status.clearOnRelease = false;
+        if (!trap.status.lastTargets) trap.status.lastTargets = [];
+
         trap.teleport = trap.teleport || {};
         if (typeof trap.teleport.pageId === "undefined") trap.teleport.pageId = "";
         if (typeof trap.teleport.left === "undefined") trap.teleport.left = 0;
@@ -74,6 +106,11 @@ var PressurePlateDoors = PressurePlateDoors || (function () {
         if (typeof trap.teleport.name === "undefined") trap.teleport.name = "";
 
         if (!trap.revealTargets) trap.revealTargets = [];
+        if (!trap.spawnTargets) trap.spawnTargets = [];
+
+        trap.effects = trap.effects || {};
+        if (typeof trap.effects.lockToken === "undefined") trap.effects.lockToken = false;
+        if (typeof trap.effects.lockMarker === "undefined") trap.effects.lockMarker = "fishing-net";
 
         return trap;
     }
@@ -84,6 +121,7 @@ var PressurePlateDoors = PressurePlateDoors || (function () {
             msgOn: "",
             msgOff: "",
             lastActive: false,
+            lastOccupants: [],
             trap: defaultTrapConfig()
         };
     }
@@ -95,7 +133,8 @@ var PressurePlateDoors = PressurePlateDoors || (function () {
             groups: {},        // groupName -> { required, plates[], doors{}, locked, lockFreeze, cfgLocked, autoLock, hasTriggered, msgOn, msgOff, lastActive }
             uiPageId: null,
             last: 0,
-            editOverride: {}   // groupName -> expiry timestamp
+            editOverride: {},  // groupName -> expiry timestamp
+            lockedTokens: {}   // tokenId -> { plateId, left, top, pageId, marker }
         };
 
         var st = state[STATE];
@@ -109,6 +148,7 @@ var PressurePlateDoors = PressurePlateDoors || (function () {
             if (typeof p.msgOn === "undefined") p.msgOn = "";
             if (typeof p.msgOff === "undefined") p.msgOff = "";
             if (typeof p.lastActive === "undefined") p.lastActive = false;
+            if (!p.lastOccupants) p.lastOccupants = [];
             p.trap = backfillTrapConfig(p.trap);
         }
 
@@ -140,6 +180,7 @@ var PressurePlateDoors = PressurePlateDoors || (function () {
         }
 
         if (!st.editOverride) st.editOverride = {};
+        if (!st.lockedTokens) st.lockedTokens = {};
 
         return st;
     }
@@ -153,6 +194,7 @@ var PressurePlateDoors = PressurePlateDoors || (function () {
         if (typeof p.msgOn === "undefined") p.msgOn = "";
         if (typeof p.msgOff === "undefined") p.msgOff = "";
         if (typeof p.lastActive === "undefined") p.lastActive = false;
+        if (!p.lastOccupants) p.lastOccupants = [];
         p.trap = backfillTrapConfig(p.trap);
 
         return p;
@@ -272,6 +314,9 @@ var PressurePlateDoors = PressurePlateDoors || (function () {
         if (type === "damage") return "Damage";
         if (type === "teleport") return "Teleport";
         if (type === "reveal") return "Reveal";
+        if (type === "save") return "Save";
+        if (type === "status") return "Status";
+        if (type === "spawn") return "Spawn";
         return "None";
     }
 
@@ -288,6 +333,120 @@ var PressurePlateDoors = PressurePlateDoors || (function () {
             names.push(tokens[i].get("name") || ("Token …" + shortId(tokens[i].id)));
         }
         return names.join(", ");
+    }
+
+    function getGraphicsByIds(ids) {
+        var out = [];
+        ids = ids || [];
+        for (var i = 0; i < ids.length; i++) {
+            var g = getObj("graphic", ids[i]);
+            if (g) out.push(g);
+        }
+        return out;
+    }
+
+    function parseMarkerList(raw) {
+        var seen = {};
+        var out = [];
+        raw = String(raw || "");
+        var parts = raw.split(",");
+
+        for (var i = 0; i < parts.length; i++) {
+            var marker = String(parts[i] || "").replace(/^\s+|\s+$/g, "");
+            if (!marker || seen[marker]) continue;
+            seen[marker] = true;
+            out.push(marker);
+        }
+
+        return out;
+    }
+
+    function applyMarkersToToken(token, markers) {
+        if (!token || !markers.length) return;
+
+        var current = parseMarkerList(token.get("statusmarkers"));
+        var map = {};
+        var out = [];
+        var i;
+
+        for (i = 0; i < current.length; i++) {
+            map[current[i]] = true;
+            out.push(current[i]);
+        }
+        for (i = 0; i < markers.length; i++) {
+            if (map[markers[i]]) continue;
+            out.push(markers[i]);
+        }
+
+        token.set({ statusmarkers: out.join(",") });
+    }
+
+    function removeMarkersFromToken(token, markers) {
+        if (!token || !markers.length) return;
+
+        var current = parseMarkerList(token.get("statusmarkers"));
+        var removeMap = {};
+        var out = [];
+        var i;
+
+        for (i = 0; i < markers.length; i++) removeMap[markers[i]] = true;
+        for (i = 0; i < current.length; i++) if (!removeMap[current[i]]) out.push(current[i]);
+
+        token.set({ statusmarkers: out.join(",") });
+    }
+
+    function lockTokenToCurrentPosition(token, plateId, marker) {
+        if (!token) return;
+
+        var st = ensureState();
+        st.lockedTokens[token.id] = {
+            plateId: plateId,
+            left: token.get("left"),
+            top: token.get("top"),
+            pageId: token.get("_pageid"),
+            marker: marker || ""
+        };
+
+        if (marker) applyMarkersToToken(token, [marker]);
+    }
+
+    function maybeApplyLockEffect(plateId, trap, tokens) {
+        if (!trap.effects || !trap.effects.lockToken) return;
+        for (var i = 0; i < tokens.length; i++) lockTokenToCurrentPosition(tokens[i], plateId, trap.effects.lockMarker);
+    }
+
+    function unlockTokenById(tokenId) {
+        var st = ensureState();
+        var lock = st.lockedTokens[tokenId];
+        if (!lock) return false;
+
+        var token = getObj("graphic", tokenId);
+        if (token && lock.marker) removeMarkersFromToken(token, [lock.marker]);
+        delete st.lockedTokens[tokenId];
+        return true;
+    }
+
+    function unlockTokensForPlate(plateId) {
+        var st = ensureState();
+        var count = 0;
+
+        for (var tokenId in st.lockedTokens) {
+            if (!st.lockedTokens.hasOwnProperty(tokenId)) continue;
+            if (st.lockedTokens[tokenId].plateId !== plateId) continue;
+            if (unlockTokenById(tokenId)) count++;
+        }
+
+        return count;
+    }
+
+    function lockedCountForPlate(plateId) {
+        var st = ensureState();
+        var count = 0;
+        for (var tokenId in st.lockedTokens) {
+            if (!st.lockedTokens.hasOwnProperty(tokenId)) continue;
+            if (st.lockedTokens[tokenId].plateId === plateId) count++;
+        }
+        return count;
     }
 
     function runRevealTargets(refs) {
@@ -333,38 +492,95 @@ var PressurePlateDoors = PressurePlateDoors || (function () {
         return moved;
     }
 
-    function firePlateTrap(plate, pdata, occupants) {
+    function runSpawnTargets(refs) {
+        var changed = 0;
+        for (var i = 0; i < refs.length; i++) {
+            var g = getObj("graphic", refs[i]);
+            if (!g) continue;
+            if (g.get("layer") === "gmlayer") {
+                g.set({ layer: "objects" });
+                changed++;
+            }
+        }
+        return changed;
+    }
+
+    function formatSaveTrapMessage(targetNames, trap, customMsg) {
+        var parts = [];
+        var save = trap.save || {};
+        var label = String(save.label || "DEX").toUpperCase();
+        var dc = parseInt(save.dc, 10);
+        if (isNaN(dc) || dc < 1) dc = 12;
+
+        if (customMsg) parts.push(customMsg);
+        parts.push(targetNames + " must make a " + label + " save (DC " + dc + ").");
+        if (String(save.successMsg || "").trim()) parts.push("Success: " + String(save.successMsg).trim() + ".");
+        if (String(save.successDamage || "").trim()) parts.push("Success damage: [[" + String(save.successDamage).trim() + "]].");
+        if (String(save.failMsg || "").trim()) parts.push("Fail: " + String(save.failMsg).trim() + ".");
+        if (String(save.failDamage || "").trim()) parts.push("Fail damage: [[" + String(save.failDamage).trim() + "]].");
+
+        return parts.join(" ");
+    }
+
+    function firePlateTrap(plate, pdata, targets) {
         if (!plate || !pdata) return;
 
         var trap = backfillTrapConfig(pdata.trap);
         if (!trap.enabled || trap.type === "none") return;
 
         var plateName = plate.get("name") || ("Plate …" + shortId(plate.id));
-        var occupantNames = occupants.length ? joinTokenNames(occupants) : plateName;
+        var targetNames = targets.length ? joinTokenNames(targets) : plateName;
         var customMsg = String(trap.message || "").trim();
 
         if (trap.type === "alarm") {
             postTriggerMessage(customMsg || ("Trap triggered at " + plateName + "."));
+            maybeApplyLockEffect(plate.id, trap, targets);
             return;
         }
 
         if (trap.type === "damage") {
-            postTriggerMessage((customMsg || "Trap hits") + ": " + occupantNames + " take [[" + String(trap.damage || "1d6") + "]] damage.");
+            postTriggerMessage((customMsg || "Trap hits") + ": " + targetNames + " take [[" + String(trap.damage || "1d6") + "]] damage.");
+            maybeApplyLockEffect(plate.id, trap, targets);
             return;
         }
 
         if (trap.type === "teleport") {
             if (!trap.teleport.pageId) return;
-            if (!occupants.length) return;
+            if (!targets.length) return;
 
-            var moved = runTeleport(occupants, trap.teleport);
+            var moved = runTeleport(targets, trap.teleport);
+            maybeApplyLockEffect(plate.id, trap, targets);
             if (moved && customMsg) postTriggerMessage(customMsg);
             return;
         }
 
         if (trap.type === "reveal") {
             var revealed = runRevealTargets(trap.revealTargets || []);
+            maybeApplyLockEffect(plate.id, trap, targets);
             if (revealed && customMsg) postTriggerMessage(customMsg);
+            return;
+        }
+
+        if (trap.type === "save") {
+            postTriggerMessage(formatSaveTrapMessage(targetNames, trap, customMsg));
+            maybeApplyLockEffect(plate.id, trap, targets);
+            return;
+        }
+
+        if (trap.type === "status") {
+            var markers = parseMarkerList(trap.status.markers);
+            for (var i = 0; i < targets.length; i++) applyMarkersToToken(targets[i], markers);
+            trap.status.lastTargets = [];
+            for (i = 0; i < targets.length; i++) trap.status.lastTargets.push(targets[i].id);
+            if (customMsg) postTriggerMessage(customMsg);
+            maybeApplyLockEffect(plate.id, trap, targets);
+            return;
+        }
+
+        if (trap.type === "spawn") {
+            var spawned = runSpawnTargets(trap.spawnTargets || []);
+            if (spawned) postTriggerMessage(customMsg || ("Spawn trap triggered at " + plateName + "."));
+            maybeApplyLockEffect(plate.id, trap, targets);
             return;
         }
     }
@@ -378,13 +594,13 @@ var PressurePlateDoors = PressurePlateDoors || (function () {
         if (!pdata || !pdata.doors) return;
 
         var occupants = plateOccupants(plate);
+        var prevOccupants = getGraphicsByIds(pdata.lastOccupants);
         var wasActive = !!pdata.lastActive;
         var occ = isPlateOccupied(plate);
 
         // edge-triggered messages
         if (occ && !wasActive) postTriggerMessage(pdata.msgOn);
         if (!occ && wasActive) postTriggerMessage(pdata.msgOff);
-        pdata.lastActive = occ;
 
         for (var doorId in pdata.doors) {
             if (!pdata.doors.hasOwnProperty(doorId)) continue;
@@ -394,9 +610,20 @@ var PressurePlateDoors = PressurePlateDoors || (function () {
             else applyUnoccupied(d, mode);
         }
 
-        if (trapFiresOnEdge(pdata.trap.trigger, wasActive, occ)) {
-            firePlateTrap(plate, pdata, occupants);
+        if (!occ && wasActive && pdata.trap.type === "status" && pdata.trap.status.clearOnRelease && pdata.trap.trigger === "press") {
+            var clearMarkers = parseMarkerList(pdata.trap.status.markers);
+            var clearTargets = getGraphicsByIds(pdata.trap.status.lastTargets);
+            for (var i = 0; i < clearTargets.length; i++) removeMarkersFromToken(clearTargets[i], clearMarkers);
+            pdata.trap.status.lastTargets = [];
         }
+
+        if (trapFiresOnEdge(pdata.trap.trigger, wasActive, occ)) {
+            firePlateTrap(plate, pdata, occ ? occupants : prevOccupants);
+        }
+
+        pdata.lastActive = occ;
+        pdata.lastOccupants = [];
+        for (var j = 0; j < occupants.length; j++) pdata.lastOccupants.push(occupants[j].id);
     }
 
     /* ---------- evaluation: groups ---------- */
@@ -673,6 +900,24 @@ var PressurePlateDoors = PressurePlateDoors || (function () {
         return out.length ? out.join(", ") : "(none)";
     }
 
+    function describeSpawnTargets(trap) {
+        var out = [];
+        var refs = (trap && trap.spawnTargets) ? trap.spawnTargets : [];
+
+        for (var i = 0; i < refs.length; i++) {
+            var g = getObj("graphic", refs[i]);
+            if (!g) continue;
+            out.push((g.get("name") || "Spawn") + " …" + shortId(g.id));
+        }
+
+        return out.length ? out.join(", ") : "(none)";
+    }
+
+    function describeStatusMarkers(trap) {
+        var markers = parseMarkerList(trap && trap.status ? trap.status.markers : "");
+        return markers.length ? markers.join(", ") : "(none)";
+    }
+
     /* ---------- commands: singles ---------- */
     function cmdMakePlateFromSelected(msg, plateName) {
         var sel = msg.selected || [];
@@ -760,6 +1005,7 @@ var PressurePlateDoors = PressurePlateDoors || (function () {
 
     function cmdRemovePlate(plateId) {
         var st = ensureState();
+        unlockTokensForPlate(plateId);
         delete st.plates[plateId];
 
         // Also remove it from any groups
@@ -796,7 +1042,7 @@ var PressurePlateDoors = PressurePlateDoors || (function () {
         type = String(type || "").toLowerCase();
 
         if (!TRAP_TYPES[type]) {
-            whisper("Trap type must be one of: <code>alarm</code>, <code>damage</code>, <code>teleport</code>, <code>reveal</code>, <code>none</code>.");
+            whisper("Trap type must be one of: <code>alarm</code>, <code>damage</code>, <code>teleport</code>, <code>reveal</code>, <code>save</code>, <code>status</code>, <code>spawn</code>, <code>none</code>.");
             return;
         }
 
@@ -828,6 +1074,56 @@ var PressurePlateDoors = PressurePlateDoors || (function () {
         var p = ensurePlateData(plateId);
         p.trap.damage = String(dmgExpr || "").trim() || "1d6";
         whisper("Plate …" + esc(shortId(plateId)) + " damage roll set to <b>" + esc(p.trap.damage) + "</b>.");
+    }
+
+    function cmdTrapSaveLabel(plateId, label) {
+        var p = ensurePlateData(plateId);
+        p.trap.save.label = String(label || "").replace(/^\s+|\s+$/g, "").toUpperCase() || "DEX";
+        whisper("Plate …" + esc(shortId(plateId)) + " save label set to <b>" + esc(p.trap.save.label) + "</b>.");
+    }
+
+    function cmdTrapSaveDc(plateId, dc) {
+        var p = ensurePlateData(plateId);
+        dc = parseInt(dc, 10);
+        if (isNaN(dc) || dc < 1) dc = 12;
+        p.trap.save.dc = dc;
+        whisper("Plate …" + esc(shortId(plateId)) + " save DC set to <b>" + esc(String(dc)) + "</b>.");
+    }
+
+    function cmdTrapSaveSuccessMsg(plateId, msgText) {
+        var p = ensurePlateData(plateId);
+        p.trap.save.successMsg = String(msgText || "");
+        whisper("Plate …" + esc(shortId(plateId)) + " save success text set.");
+    }
+
+    function cmdTrapSaveFailMsg(plateId, msgText) {
+        var p = ensurePlateData(plateId);
+        p.trap.save.failMsg = String(msgText || "");
+        whisper("Plate …" + esc(shortId(plateId)) + " save fail text set.");
+    }
+
+    function cmdTrapSaveSuccessDamage(plateId, dmgExpr) {
+        var p = ensurePlateData(plateId);
+        p.trap.save.successDamage = String(dmgExpr || "").replace(/^\s+|\s+$/g, "");
+        whisper("Plate …" + esc(shortId(plateId)) + " save success damage set.");
+    }
+
+    function cmdTrapSaveFailDamage(plateId, dmgExpr) {
+        var p = ensurePlateData(plateId);
+        p.trap.save.failDamage = String(dmgExpr || "").replace(/^\s+|\s+$/g, "");
+        whisper("Plate …" + esc(shortId(plateId)) + " save fail damage set.");
+    }
+
+    function cmdTrapStatusMarkers(plateId, markers) {
+        var p = ensurePlateData(plateId);
+        p.trap.status.markers = String(markers || "");
+        whisper("Plate …" + esc(shortId(plateId)) + " status markers set.");
+    }
+
+    function cmdTrapStatusClearToggle(plateId) {
+        var p = ensurePlateData(plateId);
+        p.trap.status.clearOnRelease = !p.trap.status.clearOnRelease;
+        whisper("Plate …" + esc(shortId(plateId)) + " clear-on-release is now " + (p.trap.status.clearOnRelease ? "<b>ON</b>" : "<b>OFF</b>") + ".");
     }
 
     function cmdTrapSetTeleport(msg, plateId) {
@@ -894,6 +1190,50 @@ var PressurePlateDoors = PressurePlateDoors || (function () {
         whisper("Reveal targets cleared for plate …" + esc(shortId(plateId)) + ".");
     }
 
+    function cmdTrapSetSpawn(msg, plateId) {
+        var p = ensurePlateData(plateId);
+        var sel = msg.selected || [];
+        var ids = [];
+
+        for (var i = 0; i < sel.length; i++) {
+            var o = getObj(sel[i]._type, sel[i]._id);
+            if (!o) continue;
+            if (o.id === plateId) continue;
+            if (o.get("_type") === "graphic") ids.push(o.id);
+        }
+
+        if (!ids.length) {
+            whisper("Select one or more GM-layer spawn tokens, then run <code>!plate trapsetspawn " + esc(plateId) + "</code>.");
+            return;
+        }
+
+        p.trap.spawnTargets = ids;
+        whisper("Spawn targets saved for plate …" + esc(shortId(plateId)) + ".");
+    }
+
+    function cmdTrapClearSpawn(plateId) {
+        var p = ensurePlateData(plateId);
+        p.trap.spawnTargets = [];
+        whisper("Spawn targets cleared for plate …" + esc(shortId(plateId)) + ".");
+    }
+
+    function cmdTrapLockToggle(plateId) {
+        var p = ensurePlateData(plateId);
+        p.trap.effects.lockToken = !p.trap.effects.lockToken;
+        whisper("Plate …" + esc(shortId(plateId)) + " lock-token effect is now " + (p.trap.effects.lockToken ? "<b>ON</b>" : "<b>OFF</b>") + ".");
+    }
+
+    function cmdTrapLockMarker(plateId, marker) {
+        var p = ensurePlateData(plateId);
+        p.trap.effects.lockMarker = String(marker || "").replace(/^\s+|\s+$/g, "");
+        whisper("Plate …" + esc(shortId(plateId)) + " lock marker updated.");
+    }
+
+    function cmdTrapUnlock(plateId) {
+        var count = unlockTokensForPlate(plateId);
+        whisper("Unlocked <b>" + esc(String(count)) + "</b> token(s) for plate …" + esc(shortId(plateId)) + ".");
+    }
+
     function renderTrapUI(playerid, plateId) {
         var plate = getObj("graphic", plateId);
         if (!plate) return whisper("Plate not found.");
@@ -927,6 +1267,9 @@ var PressurePlateDoors = PressurePlateDoors || (function () {
         html += '<div style="font-weight:900;font-size:16px;margin-bottom:6px;">Trap Type</div>';
         html += mini("Alarm", "!plate traptype " + plateId + " alarm", "Narration or warning trap");
         html += mini("Damage", "!plate traptype " + plateId + " damage", "Damage trap");
+        html += mini("Save", "!plate traptype " + plateId + " save", "Save/check prompt trap");
+        html += mini("Status", "!plate traptype " + plateId + " status", "Apply status markers");
+        html += mini("Spawn", "!plate traptype " + plateId + " spawn", "Reveal selected spawn tokens");
         html += mini("Teleport", "!plate traptype " + plateId + " teleport", "Teleport occupants");
         html += mini("Reveal", "!plate traptype " + plateId + " reveal", "Reveal hidden targets");
         html += mini("Disable", "!plate traptype " + plateId + " none", "Disable trap without removing plate");
@@ -955,6 +1298,33 @@ var PressurePlateDoors = PressurePlateDoors || (function () {
             html += "</div>";
         }
 
+        if (trap.type === "save") {
+            html += '<div style="border:2px solid #111;border-radius:10px;padding:10px;margin-bottom:10px;background:#fafafa;">';
+            html += '<div style="font-weight:900;font-size:16px;margin-bottom:6px;">Save Settings</div>';
+            html += mini("Set save label", "!plate trapsavelabel " + plateId + " ?{Save label|DEX}", "Ability/check label");
+            html += mini("Set DC", "!plate trapsavedc " + plateId + " ?{Save DC|12}", "Difficulty class");
+            html += mini("Set success text", "!plate trapsavesuccessmsg " + plateId + " ?{Success text|}", "Text shown on success");
+            html += mini("Set fail text", "!plate trapsavefailmsg " + plateId + " ?{Fail text|}", "Text shown on fail");
+            html += mini("Set success damage", "!plate trapsavesuccessdmg " + plateId + " ?{Success damage|}", "Optional success damage");
+            html += mini("Set fail damage", "!plate trapsavefaildmg " + plateId + " ?{Fail damage|1d6}", "Optional fail damage");
+            html += '<div style="margin-top:8px;font-weight:900;">Save: <span style="color:#333;">' + esc(String(trap.save.label).toUpperCase()) + " DC " + esc(String(trap.save.dc)) + "</span></div>";
+            html += '<div style="margin-top:4px;font-weight:900;">Success: <span style="color:#333;">' + esc(String(trap.save.successMsg || "").trim() || "(none)") + "</span></div>";
+            html += '<div style="margin-top:4px;font-weight:900;">Success damage: <span style="color:#333;">' + esc(String(trap.save.successDamage || "").trim() || "(none)") + "</span></div>";
+            html += '<div style="margin-top:4px;font-weight:900;">Fail: <span style="color:#333;">' + esc(String(trap.save.failMsg || "").trim() || "(none)") + "</span></div>";
+            html += '<div style="margin-top:4px;font-weight:900;">Fail damage: <span style="color:#333;">' + esc(String(trap.save.failDamage || "").trim() || "(none)") + "</span></div>";
+            html += "</div>";
+        }
+
+        if (trap.type === "status") {
+            html += '<div style="border:2px solid #111;border-radius:10px;padding:10px;margin-bottom:10px;background:#fafafa;">';
+            html += '<div style="font-weight:900;font-size:16px;margin-bottom:6px;">Status Settings</div>';
+            html += mini("Set markers", "!plate trapstatusmarkers " + plateId + " ?{Markers (comma-separated)|cobweb}", "Token status markers to apply");
+            html += mini(trap.status.clearOnRelease ? "Clear on release: ON" : "Clear on release: OFF", "!plate trapstatusclear " + plateId, "Toggle removal when the plate releases");
+            html += '<div style="margin-top:8px;font-weight:900;">Markers: <span style="color:#333;">' + esc(describeStatusMarkers(trap)) + "</span></div>";
+            html += '<div style="margin-top:4px;font-weight:900;">Clear on release: <span style="color:#333;">' + esc(trap.status.clearOnRelease ? "ON (press-trigger only)" : "OFF") + "</span></div>";
+            html += "</div>";
+        }
+
         if (trap.type === "teleport") {
             html += '<div style="border:2px solid #111;border-radius:10px;padding:10px;margin-bottom:10px;background:#fafafa;">';
             html += '<div style="font-weight:900;font-size:16px;margin-bottom:6px;">Teleport Settings</div>';
@@ -972,6 +1342,25 @@ var PressurePlateDoors = PressurePlateDoors || (function () {
             html += '<div style="margin-top:8px;font-weight:900;">Targets: <span style="color:#333;">' + esc(describeRevealTargets(trap)) + "</span></div>";
             html += "</div>";
         }
+
+        if (trap.type === "spawn") {
+            html += '<div style="border:2px solid #111;border-radius:10px;padding:10px;margin-bottom:10px;background:#fafafa;">';
+            html += '<div style="font-weight:900;font-size:16px;margin-bottom:6px;">Spawn Settings</div>';
+            html += mini("Set spawn targets from selection", "!plate trapsetspawn " + plateId, "Select one or more GM-layer graphics to reveal");
+            html += mini("Clear spawn targets", "!plate trapclearspawn " + plateId, "Remove spawn target list");
+            html += '<div style="margin-top:8px;font-weight:900;">Targets: <span style="color:#333;">' + esc(describeSpawnTargets(trap)) + "</span></div>";
+            html += "</div>";
+        }
+
+        html += '<div style="border:2px solid #111;border-radius:10px;padding:10px;margin-bottom:10px;">';
+        html += '<div style="font-weight:900;font-size:16px;margin-bottom:6px;">Extra Effects</div>';
+        html += mini(trap.effects.lockToken ? "Lock token: ON" : "Lock token: OFF", "!plate traplocktoggle " + plateId, "Toggle immobilizing tokens hit by this trap");
+        html += mini("Set lock marker", "!plate traplockmarker " + plateId + " ?{Lock marker|fishing-net}", "Marker added to locked tokens");
+        html += mini("Unlock tokens", "!plate trapunlock " + plateId, "Clear tokens currently locked by this plate");
+        html += '<div style="margin-top:8px;font-weight:900;">Lock effect: <span style="color:#333;">' + esc(trap.effects.lockToken ? "ON" : "OFF") + "</span></div>";
+        html += '<div style="margin-top:4px;font-weight:900;">Lock marker: <span style="color:#333;">' + esc(String(trap.effects.lockMarker || "").trim() || "(none)") + "</span></div>";
+        html += '<div style="margin-top:4px;font-weight:900;">Locked tokens: <span style="color:#333;">' + esc(String(lockedCountForPlate(plateId))) + "</span></div>";
+        html += "</div>";
 
         html += "</div></div>";
         whisper(html);
@@ -1475,6 +1864,27 @@ var PressurePlateDoors = PressurePlateDoors || (function () {
         if (obj.get("layer") !== "objects") return;
         if (obj.get("_subtype") !== "token") return;
 
+        if (MOVE_LOCK_REENTRY[obj.id]) {
+            delete MOVE_LOCK_REENTRY[obj.id];
+            return;
+        }
+
+        var st = ensureState();
+        var lock = st.lockedTokens[obj.id];
+        if (lock) {
+            var moved = (
+                obj.get("left") !== lock.left ||
+                obj.get("top") !== lock.top ||
+                obj.get("_pageid") !== lock.pageId
+            );
+
+            if (moved) {
+                MOVE_LOCK_REENTRY[obj.id] = true;
+                obj.set({ left: lock.left, top: lock.top, _pageid: lock.pageId, layer: "objects" });
+                return;
+            }
+        }
+
         if (
             obj.get("left") !== prev.left ||
             obj.get("top") !== prev.top ||
@@ -1520,10 +1930,23 @@ var PressurePlateDoors = PressurePlateDoors || (function () {
         if (sub === "traptrigger") { if (a) cmdTrapTrigger(a, b); return renderTrapUI(msg.playerid, a); }
         if (sub === "trapmsg") { if (a) cmdTrapMessage(a, restFrom(3)); return renderTrapUI(msg.playerid, a); }
         if (sub === "trapdamage") { if (a) cmdTrapDamage(a, restFrom(3)); return renderTrapUI(msg.playerid, a); }
+        if (sub === "trapsavelabel") { if (a) cmdTrapSaveLabel(a, restFrom(3)); return renderTrapUI(msg.playerid, a); }
+        if (sub === "trapsavedc") { if (a) cmdTrapSaveDc(a, b); return renderTrapUI(msg.playerid, a); }
+        if (sub === "trapsavesuccessmsg") { if (a) cmdTrapSaveSuccessMsg(a, restFrom(3)); return renderTrapUI(msg.playerid, a); }
+        if (sub === "trapsavefailmsg") { if (a) cmdTrapSaveFailMsg(a, restFrom(3)); return renderTrapUI(msg.playerid, a); }
+        if (sub === "trapsavesuccessdmg") { if (a) cmdTrapSaveSuccessDamage(a, restFrom(3)); return renderTrapUI(msg.playerid, a); }
+        if (sub === "trapsavefaildmg") { if (a) cmdTrapSaveFailDamage(a, restFrom(3)); return renderTrapUI(msg.playerid, a); }
+        if (sub === "trapstatusmarkers") { if (a) cmdTrapStatusMarkers(a, restFrom(3)); return renderTrapUI(msg.playerid, a); }
+        if (sub === "trapstatusclear") { if (a) cmdTrapStatusClearToggle(a); return renderTrapUI(msg.playerid, a); }
         if (sub === "trapsetteleport") { if (a) cmdTrapSetTeleport(msg, a); return renderTrapUI(msg.playerid, a); }
         if (sub === "trapclearteleport") { if (a) cmdTrapClearTeleport(a); return renderTrapUI(msg.playerid, a); }
         if (sub === "trapsetreveal") { if (a) cmdTrapSetReveal(msg, a); return renderTrapUI(msg.playerid, a); }
         if (sub === "trapclearreveal") { if (a) cmdTrapClearReveal(a); return renderTrapUI(msg.playerid, a); }
+        if (sub === "trapsetspawn") { if (a) cmdTrapSetSpawn(msg, a); return renderTrapUI(msg.playerid, a); }
+        if (sub === "trapclearspawn") { if (a) cmdTrapClearSpawn(a); return renderTrapUI(msg.playerid, a); }
+        if (sub === "traplocktoggle") { if (a) cmdTrapLockToggle(a); return renderTrapUI(msg.playerid, a); }
+        if (sub === "traplockmarker") { if (a) cmdTrapLockMarker(a, restFrom(3)); return renderTrapUI(msg.playerid, a); }
+        if (sub === "trapunlock") { if (a) cmdTrapUnlock(a); return renderTrapUI(msg.playerid, a); }
 
         // Plate messages (allow spaces)
         if (sub === "platemsgon") { if (a) cmdSetPlateMsgOn(a, restFrom(3)); return renderUI(msg.playerid); }
@@ -1558,9 +1981,12 @@ var PressurePlateDoors = PressurePlateDoors || (function () {
         whisper(
             "Commands:<br>" +
             "<code>!plate ui</code>, <code>!plate setpage</code>, <code>!plate make NAME</code>, <code>!plate add lock|secret</code>, <code>!plate check</code>, <code>!plate ping PLATEID</code><br>" +
-            "Trap UI:<br><code>!plate trapui PLATEID</code>, <code>!plate traptoggle PLATEID</code>, <code>!plate traptype PLATEID alarm|damage|teleport|reveal|none</code><br>" +
+            "Trap UI:<br><code>!plate trapui PLATEID</code>, <code>!plate traptoggle PLATEID</code>, <code>!plate traptype PLATEID alarm|damage|teleport|reveal|save|status|spawn|none</code><br>" +
             "<code>!plate traptrigger PLATEID press|release|both</code>, <code>!plate trapmsg PLATEID ...</code>, <code>!plate trapdamage PLATEID XdY</code><br>" +
+            "<code>!plate trapsavelabel PLATEID LABEL</code>, <code>!plate trapsavedc PLATEID DC</code>, <code>!plate trapsavesuccessmsg PLATEID ...</code>, <code>!plate trapsavefailmsg PLATEID ...</code><br>" +
+            "<code>!plate trapsavesuccessdmg PLATEID XdY</code>, <code>!plate trapsavefaildmg PLATEID XdY</code>, <code>!plate trapstatusmarkers PLATEID marker1,marker2</code>, <code>!plate trapstatusclear PLATEID</code><br>" +
             "<code>!plate trapsetteleport PLATEID</code>, <code>!plate trapclearteleport PLATEID</code>, <code>!plate trapsetreveal PLATEID</code>, <code>!plate trapclearreveal PLATEID</code><br>" +
+            "<code>!plate trapsetspawn PLATEID</code>, <code>!plate trapclearspawn PLATEID</code>, <code>!plate traplocktoggle PLATEID</code>, <code>!plate traplockmarker PLATEID MARKER</code>, <code>!plate trapunlock PLATEID</code><br>" +
             "Plate Messages:<br><code>!plate platemsgon PLATEID ...</code>, <code>!plate platemsgoff PLATEID ...</code><br>" +
             "Groups:<br>" +
             "<code>!plate grouplock NAME</code> (mechanism lock), <code>!plate groupcfglock NAME</code> (config lock), <code>!plate groupoverride NAME</code> (60s override)<br>" +

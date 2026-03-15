@@ -14,7 +14,9 @@ Secret doors and locked doors
 
 Trigger & release messages
 
-Trap types: alarm, damage, teleport, reveal
+Trap types: alarm, damage, teleport, reveal, save, status, spawn
+
+Extra trap effect: lock triggered token(s) in place
 
 Auto-lock puzzles
 
@@ -141,14 +143,27 @@ Command Reference
 !plate add secret
 !plate trapui PLATEID
 !plate traptoggle PLATEID
-!plate traptype PLATEID alarm|damage|teleport|reveal|none
+!plate traptype PLATEID alarm|damage|teleport|reveal|save|status|spawn|none
 !plate traptrigger PLATEID press|release|both
 !plate trapmsg PLATEID message...
 !plate trapdamage PLATEID XdY
+!plate trapsavelabel PLATEID LABEL
+!plate trapsavedc PLATEID DC
+!plate trapsavesuccessmsg PLATEID message...
+!plate trapsavefailmsg PLATEID message...
+!plate trapsavesuccessdmg PLATEID XdY
+!plate trapsavefaildmg PLATEID XdY
+!plate trapstatusmarkers PLATEID marker1,marker2
+!plate trapstatusclear PLATEID
 !plate trapsetteleport PLATEID
 !plate trapclearteleport PLATEID
 !plate trapsetreveal PLATEID
 !plate trapclearreveal PLATEID
+!plate trapsetspawn PLATEID
+!plate trapclearspawn PLATEID
+!plate traplocktoggle PLATEID
+!plate traplockmarker PLATEID MARKER
+!plate trapunlock PLATEID
 !plate checkplate PLATEID
 !plate simopen PLATEID
 !plate simclose PLATEID
@@ -228,6 +243,22 @@ Moves the token(s) on the plate to a saved destination marker.
 REVEAL
 
 Reveals selected GM-layer graphics or secret doors.
+
+SAVE
+
+Prompts a save or check with configurable DC, messages, and optional success/fail damage.
+
+STATUS
+
+Applies configurable token markers to triggered token(s), with optional clear on release.
+
+SPAWN
+
+Moves selected GM-layer spawn tokens to the objects layer when triggered.
+
+LOCK TOKEN EFFECT
+
+Optional extra trap effect that holds triggered token(s) in place until manually unlocked.
 
 State Persistence
 
