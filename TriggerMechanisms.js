@@ -1,5 +1,5 @@
 /* ============================================================
-   PressurePlateDoors (ES5) — Teleport-Style UI + Ping + Locks + Messages
+   TriggerMechanisms (ES5) — Teleport-Style UI + Ping + Locks + Messages
    ============================================================
    FEATURES
    - Plates trigger doors when ANY token is FULLY on the plate token bbox.
@@ -27,14 +27,14 @@
    - KEEP THE SAME STATE KEY FOREVER or bindings "disappear" (they won't be deleted; they'd be under the old key).
    ============================================================ */
 
-var PressurePlateDoors = PressurePlateDoors || (function () {
+var TriggerMechanisms = TriggerMechanisms || (function () {
     "use strict";
 
-    var MOD = "PressurePlateDoors";
+    var MOD = "TriggerMechanisms";
 
     // >>> KEEP THIS THE SAME FOREVER (use your existing key) <<<
     // If your current working script uses a different key, replace this string with THAT key once.
-    var STATE = "PPD_CAMPAIGN_CORE";
+    var STATE = "TM_CAMPAIGN_CORE";
 
     var DEBOUNCE_MS = 120;
     var OVERRIDE_MS = 60000; // 60s config override
@@ -251,7 +251,7 @@ var PressurePlateDoors = PressurePlateDoors || (function () {
 
     function cmdPingPlate(playerid, plateId) {
         var p = getObj("graphic", plateId);
-        if (!p) return whisper("Plate not found.");
+        if (!p) return whisper("Trigger not found.");
         pingGraphic(p, playerid);
     }
 
@@ -536,7 +536,7 @@ var PressurePlateDoors = PressurePlateDoors || (function () {
     }
 
     function firePlateTrap(plate, pdata, targets) {
-        if (!plate || !pdata) return;
+        if (!mech || !pdata) return;
 
         var trap = backfillTrapConfig(pdata.trap);
         if (!trap.enabled || trap.type === "none") return;
@@ -608,7 +608,7 @@ var PressurePlateDoors = PressurePlateDoors || (function () {
     /* ---------- evaluation: single plate ---------- */
     function evaluatePlate(plateId) {
         var plate = getObj("graphic", plateId);
-        if (!plate) return;
+        if (!mech) return;
 
         var pdata = ensurePlateData(plateId);
         if (!pdata || !pdata.doors) return;
@@ -669,7 +669,7 @@ var PressurePlateDoors = PressurePlateDoors || (function () {
         for (var i = 0; i < group.plates.length; i++) {
             var pid = group.plates[i];
             var plate = getObj("graphic", pid);
-            if (!plate) continue;
+            if (!mech) continue;
             if (isPlateOccupied(plate)) count++;
         }
         return count;
@@ -943,7 +943,7 @@ var PressurePlateDoors = PressurePlateDoors || (function () {
         var sel = msg.selected || [];
 
         if (!sel.length) {
-            whisper("Select one or more tokens, then run <code>!plate make</code>.");
+            whisper("Select one or more tokens, then run <code>!mech make</code>.");
             return;
         }
 
@@ -977,7 +977,7 @@ var PressurePlateDoors = PressurePlateDoors || (function () {
     function cmdAddSingle(msg, mode) {
         mode = (mode || "").toLowerCase();
         if (mode !== "lock" && mode !== "secret") {
-            whisper("Use <code>!plate add lock</code> or <code>!plate add secret</code>.");
+            whisper("Use <code>!mech add lock</code> or <code>!mech add secret</code>.");
             return;
         }
 
@@ -993,7 +993,7 @@ var PressurePlateDoors = PressurePlateDoors || (function () {
             if (o.get("_type") === "door") doors.push(o);
         }
 
-        if (!plate) { whisper("Select a plate token (GM layer) and one or more Door objects."); return; }
+        if (!mech) { whisper("Select a plate token (GM layer) and one or more Door objects."); return; }
         if (!doors.length) { whisper("No Door objects selected (must be Door tool doors)."); return; }
 
         ensurePlateData(plate.id);
@@ -1041,20 +1041,20 @@ var PressurePlateDoors = PressurePlateDoors || (function () {
     function cmdSetPlateMsgOn(plateId, msgText) {
         var p = ensurePlateData(plateId);
         p.msgOn = String(msgText || "");
-        whisper("Plate …" + esc(shortId(plateId)) + " trigger message set.");
+        whisper("Trigger …" + esc(shortId(plateId)) + " trigger message set.");
     }
 
     function cmdSetPlateMsgOff(plateId, msgText) {
         var p = ensurePlateData(plateId);
         p.msgOff = String(msgText || "");
-        whisper("Plate …" + esc(shortId(plateId)) + " release message set.");
+        whisper("Trigger …" + esc(shortId(plateId)) + " release message set.");
     }
 
     function cmdTrapToggle(plateId) {
         var p = ensurePlateData(plateId);
         p.trap.enabled = !p.trap.enabled;
         if (p.trap.enabled && p.trap.type === "none") p.trap.type = "alarm";
-        whisper("Plate …" + esc(shortId(plateId)) + " trap is now " + (p.trap.enabled ? "<b>ENABLED</b>" : "<b>DISABLED</b>") + ".");
+        whisper("Trigger …" + esc(shortId(plateId)) + " trap is now " + (p.trap.enabled ? "<b>ENABLED</b>" : "<b>DISABLED</b>") + ".");
     }
 
     function cmdTrapType(plateId, type) {
@@ -1068,7 +1068,7 @@ var PressurePlateDoors = PressurePlateDoors || (function () {
 
         p.trap.type = type;
         p.trap.enabled = (type !== "none");
-        whisper("Plate …" + esc(shortId(plateId)) + " trap type set to <b>" + esc(trapTypeLabel(type).toUpperCase()) + "</b>.");
+        whisper("Trigger …" + esc(shortId(plateId)) + " trap type set to <b>" + esc(trapTypeLabel(type).toUpperCase()) + "</b>.");
     }
 
     function cmdTrapTrigger(plateId, trigger) {
@@ -1081,25 +1081,25 @@ var PressurePlateDoors = PressurePlateDoors || (function () {
         }
 
         p.trap.trigger = trigger;
-        whisper("Plate …" + esc(shortId(plateId)) + " trap trigger set to <b>" + esc(trapTriggerLabel(trigger).toUpperCase()) + "</b>.");
+        whisper("Trigger …" + esc(shortId(plateId)) + " trap trigger set to <b>" + esc(trapTriggerLabel(trigger).toUpperCase()) + "</b>.");
     }
 
     function cmdTrapMessage(plateId, msgText) {
         var p = ensurePlateData(plateId);
         p.trap.message = String(msgText || "");
-        whisper("Plate …" + esc(shortId(plateId)) + " trap message set.");
+        whisper("Trigger …" + esc(shortId(plateId)) + " trap message set.");
     }
 
     function cmdTrapDamage(plateId, dmgExpr) {
         var p = ensurePlateData(plateId);
         p.trap.damage = String(dmgExpr || "").trim() || "1d6";
-        whisper("Plate …" + esc(shortId(plateId)) + " damage roll set to <b>" + esc(p.trap.damage) + "</b>.");
+        whisper("Trigger …" + esc(shortId(plateId)) + " damage roll set to <b>" + esc(p.trap.damage) + "</b>.");
     }
 
     function cmdTrapSaveLabel(plateId, label) {
         var p = ensurePlateData(plateId);
         p.trap.save.label = String(label || "").replace(/^\s+|\s+$/g, "").toUpperCase() || "DEX";
-        whisper("Plate …" + esc(shortId(plateId)) + " save label set to <b>" + esc(p.trap.save.label) + "</b>.");
+        whisper("Trigger …" + esc(shortId(plateId)) + " save label set to <b>" + esc(p.trap.save.label) + "</b>.");
     }
 
     function cmdTrapSaveDc(plateId, dc) {
@@ -1107,19 +1107,19 @@ var PressurePlateDoors = PressurePlateDoors || (function () {
         dc = parseInt(dc, 10);
         if (isNaN(dc) || dc < 1) dc = 12;
         p.trap.save.dc = dc;
-        whisper("Plate …" + esc(shortId(plateId)) + " save DC set to <b>" + esc(String(dc)) + "</b>.");
+        whisper("Trigger …" + esc(shortId(plateId)) + " save DC set to <b>" + esc(String(dc)) + "</b>.");
     }
 
     function cmdTrapSaveSuccessMsg(plateId, msgText) {
         var p = ensurePlateData(plateId);
         p.trap.save.successMsg = String(msgText || "");
-        whisper("Plate …" + esc(shortId(plateId)) + " save success text set.");
+        whisper("Trigger …" + esc(shortId(plateId)) + " save success text set.");
     }
 
     function cmdTrapSaveFailMsg(plateId, msgText) {
         var p = ensurePlateData(plateId);
         p.trap.save.failMsg = String(msgText || "");
-        whisper("Plate …" + esc(shortId(plateId)) + " save fail text set.");
+        whisper("Trigger …" + esc(shortId(plateId)) + " save fail text set.");
     }
 
     function cmdTrapSaveSuccessMode(plateId, mode) {
@@ -1131,31 +1131,31 @@ var PressurePlateDoors = PressurePlateDoors || (function () {
         }
 
         p.trap.save.successMode = mode;
-        whisper("Plate …" + esc(shortId(plateId)) + " save success set to <b>" + esc(mode.toUpperCase()) + "</b>.");
+        whisper("Trigger …" + esc(shortId(plateId)) + " save success set to <b>" + esc(mode.toUpperCase()) + "</b>.");
     }
 
     function cmdTrapSaveDamageType(plateId, dmgType) {
         var p = ensurePlateData(plateId);
         p.trap.save.damageType = String(dmgType || "").replace(/^\s+|\s+$/g, "");
-        whisper("Plate …" + esc(shortId(plateId)) + " save damage type set.");
+        whisper("Trigger …" + esc(shortId(plateId)) + " save damage type set.");
     }
 
     function cmdTrapSaveFailDamage(plateId, dmgExpr) {
         var p = ensurePlateData(plateId);
         p.trap.save.failDamage = String(dmgExpr || "").replace(/^\s+|\s+$/g, "");
-        whisper("Plate …" + esc(shortId(plateId)) + " save fail damage set.");
+        whisper("Trigger …" + esc(shortId(plateId)) + " save fail damage set.");
     }
 
     function cmdTrapStatusMarkers(plateId, markers) {
         var p = ensurePlateData(plateId);
         p.trap.status.markers = String(markers || "");
-        whisper("Plate …" + esc(shortId(plateId)) + " status markers set.");
+        whisper("Trigger …" + esc(shortId(plateId)) + " status markers set.");
     }
 
     function cmdTrapStatusClearToggle(plateId) {
         var p = ensurePlateData(plateId);
         p.trap.status.clearOnRelease = !p.trap.status.clearOnRelease;
-        whisper("Plate …" + esc(shortId(plateId)) + " clear-on-release is now " + (p.trap.status.clearOnRelease ? "<b>ON</b>" : "<b>OFF</b>") + ".");
+        whisper("Trigger …" + esc(shortId(plateId)) + " clear-on-release is now " + (p.trap.status.clearOnRelease ? "<b>ON</b>" : "<b>OFF</b>") + ".");
     }
 
     function cmdTrapSetTeleport(msg, plateId) {
@@ -1173,7 +1173,7 @@ var PressurePlateDoors = PressurePlateDoors || (function () {
         }
 
         if (!marker) {
-            whisper("Select one destination token/graphic, then run <code>!plate trapsetteleport " + esc(plateId) + "</code>.");
+            whisper("Select one destination token/graphic, then run <code>!mech trapsetteleport " + esc(plateId) + "</code>.");
             return;
         }
 
@@ -1183,13 +1183,13 @@ var PressurePlateDoors = PressurePlateDoors || (function () {
             top: marker.get("top"),
             name: marker.get("name") || ("Marker …" + shortId(marker.id))
         };
-        whisper("Teleport destination saved for plate …" + esc(shortId(plateId)) + ".");
+        whisper("Teleport destination saved for trigger …" + esc(shortId(plateId)) + ".");
     }
 
     function cmdTrapClearTeleport(plateId) {
         var p = ensurePlateData(plateId);
         p.trap.teleport = defaultTrapConfig().teleport;
-        whisper("Teleport destination cleared for plate …" + esc(shortId(plateId)) + ".");
+        whisper("Teleport destination cleared for trigger …" + esc(shortId(plateId)) + ".");
     }
 
     function cmdTrapSetReveal(msg, plateId) {
@@ -1208,18 +1208,18 @@ var PressurePlateDoors = PressurePlateDoors || (function () {
         }
 
         if (!refs.length) {
-            whisper("Select one or more hidden graphics or secret doors, then run <code>!plate trapsetreveal " + esc(plateId) + "</code>.");
+            whisper("Select one or more hidden graphics or secret doors, then run <code>!mech trapsetreveal " + esc(plateId) + "</code>.");
             return;
         }
 
         p.trap.revealTargets = refs;
-        whisper("Reveal targets saved for plate …" + esc(shortId(plateId)) + ".");
+        whisper("Reveal targets saved for trigger …" + esc(shortId(plateId)) + ".");
     }
 
     function cmdTrapClearReveal(plateId) {
         var p = ensurePlateData(plateId);
         p.trap.revealTargets = [];
-        whisper("Reveal targets cleared for plate …" + esc(shortId(plateId)) + ".");
+        whisper("Reveal targets cleared for trigger …" + esc(shortId(plateId)) + ".");
     }
 
     function cmdTrapSetSpawn(msg, plateId) {
@@ -1235,46 +1235,46 @@ var PressurePlateDoors = PressurePlateDoors || (function () {
         }
 
         if (!ids.length) {
-            whisper("Select one or more GM-layer spawn tokens, then run <code>!plate trapsetspawn " + esc(plateId) + "</code>.");
+            whisper("Select one or more GM-layer spawn tokens, then run <code>!mech trapsetspawn " + esc(plateId) + "</code>.");
             return;
         }
 
         p.trap.spawnTargets = ids;
-        whisper("Spawn targets saved for plate …" + esc(shortId(plateId)) + ".");
+        whisper("Spawn targets saved for trigger …" + esc(shortId(plateId)) + ".");
     }
 
     function cmdTrapClearSpawn(plateId) {
         var p = ensurePlateData(plateId);
         p.trap.spawnTargets = [];
-        whisper("Spawn targets cleared for plate …" + esc(shortId(plateId)) + ".");
+        whisper("Spawn targets cleared for trigger …" + esc(shortId(plateId)) + ".");
     }
 
     function cmdTrapLockToggle(plateId) {
         var p = ensurePlateData(plateId);
         p.trap.effects.lockToken = !p.trap.effects.lockToken;
-        whisper("Plate …" + esc(shortId(plateId)) + " lock-token effect is now " + (p.trap.effects.lockToken ? "<b>ON</b>" : "<b>OFF</b>") + ".");
+        whisper("Trigger …" + esc(shortId(plateId)) + " lock-token effect is now " + (p.trap.effects.lockToken ? "<b>ON</b>" : "<b>OFF</b>") + ".");
     }
 
     function cmdTrapLockMarker(plateId, marker) {
         var p = ensurePlateData(plateId);
         p.trap.effects.lockMarker = String(marker || "").replace(/^\s+|\s+$/g, "");
-        whisper("Plate …" + esc(shortId(plateId)) + " lock marker updated.");
+        whisper("Trigger …" + esc(shortId(plateId)) + " lock marker updated.");
     }
 
     function cmdTrapRevealToggle(plateId) {
         var p = ensurePlateData(plateId);
         p.trap.effects.revealAlso = !p.trap.effects.revealAlso;
-        whisper("Plate …" + esc(shortId(plateId)) + " reveal effect is now " + (p.trap.effects.revealAlso ? "<b>ON</b>" : "<b>OFF</b>") + ".");
+        whisper("Trigger …" + esc(shortId(plateId)) + " reveal effect is now " + (p.trap.effects.revealAlso ? "<b>ON</b>" : "<b>OFF</b>") + ".");
     }
 
     function cmdTrapUnlock(plateId) {
         var count = unlockTokensForPlate(plateId);
-        whisper("Unlocked <b>" + esc(String(count)) + "</b> token(s) for plate …" + esc(shortId(plateId)) + ".");
+        whisper("Unlocked <b>" + esc(String(count)) + "</b> token(s) for trigger …" + esc(shortId(plateId)) + ".");
     }
 
     function renderTrapUI(playerid, plateId) {
         var plate = getObj("graphic", plateId);
-        if (!plate) return whisper("Plate not found.");
+        if (!mech) return whisper("Trigger not found.");
 
         var pdata = ensurePlateData(plateId);
         var trap = pdata.trap;
@@ -1286,7 +1286,7 @@ var PressurePlateDoors = PressurePlateDoors || (function () {
         var html = "";
         html += '<div style="border:2px solid #111;border-radius:12px;overflow:hidden;max-width:760px;font-family:Arial,sans-serif;">';
         html += '<div style="background:#000;color:#fff;padding:10px 12px;">';
-        html += '<div style="font-weight:900;font-size:20px;">Trap Configuration</div>';
+        html += '<div style="font-weight:900;font-size:20px;">Mechanism Configuration</div>';
         html += '<div style="color:#cfcfcf;font-weight:900;font-size:12px;margin-top:2px;">' + esc(name) + " • " + esc(triggerHint) + "</div>";
         html += "</div>";
         html += '<div style="background:#fff;padding:10px;">';
@@ -1295,43 +1295,43 @@ var PressurePlateDoors = PressurePlateDoors || (function () {
         html += badge(occ ? "OCCUPIED" : "CLEAR", occ);
         html += enabled ? badge("TRAP ENABLED", false) : badge("TRAP DISABLED", false);
         html += '<div style="margin-top:8px;">';
-        html += iconBtn("↩️", "!plate ui", "Back to plate list");
-        html += iconBtn("💣", "!plate traptoggle " + plateId, enabled ? "Disable trap" : "Enable trap");
-        html += iconBtn("🔄", "!plate trapui " + plateId, "Refresh trap configuration");
+        html += iconBtn("↩️", "!mech ui", "Back to mechanism list");
+        html += iconBtn("💣", "!mech traptoggle " + plateId, enabled ? "Disable trap" : "Enable trap");
+        html += iconBtn("🔄", "!mech trapui " + plateId, "Refresh trap configuration");
         html += "</div>";
         html += "</div>";
 
         html += '<div style="border:2px solid #111;border-radius:10px;padding:10px;margin-bottom:10px;background:#fafafa;">';
         html += '<div style="font-weight:900;font-size:16px;margin-bottom:6px;">Trap Type</div>';
-        html += mini("Alarm", "!plate traptype " + plateId + " alarm", "Narration or warning trap");
-        html += mini("Damage", "!plate traptype " + plateId + " damage", "Damage trap");
-        html += mini("Save", "!plate traptype " + plateId + " save", "Save/check prompt trap");
-        html += mini("Status", "!plate traptype " + plateId + " status", "Apply status markers");
-        html += mini("Spawn", "!plate traptype " + plateId + " spawn", "Reveal selected spawn tokens");
-        html += mini("Teleport", "!plate traptype " + plateId + " teleport", "Teleport occupants");
-        html += mini("Reveal", "!plate traptype " + plateId + " reveal", "Reveal hidden targets");
-        html += mini("Disable", "!plate traptype " + plateId + " none", "Disable trap without removing plate");
+        html += mini("Alarm", "!mech traptype " + plateId + " alarm", "Narration or warning trap");
+        html += mini("Damage", "!mech traptype " + plateId + " damage", "Damage trap");
+        html += mini("Save", "!mech traptype " + plateId + " save", "Save/check prompt trap");
+        html += mini("Status", "!mech traptype " + plateId + " status", "Apply status markers");
+        html += mini("Spawn", "!mech traptype " + plateId + " spawn", "Reveal selected spawn tokens");
+        html += mini("Teleport", "!mech traptype " + plateId + " teleport", "Teleport occupants");
+        html += mini("Reveal", "!mech traptype " + plateId + " reveal", "Reveal hidden targets");
+        html += mini("Disable", "!mech traptype " + plateId + " none", "Disable trap without removing plate");
         html += '<div style="margin-top:8px;font-weight:900;">Current type: <span style="color:#333;">' + esc(trapTypeLabel(trap.type)) + "</span></div>";
         html += "</div>";
 
         html += '<div style="border:2px solid #111;border-radius:10px;padding:10px;margin-bottom:10px;">';
         html += '<div style="font-weight:900;font-size:16px;margin-bottom:6px;">Trigger</div>';
-        html += mini("Press", "!plate traptrigger " + plateId + " press", "Fire when the plate is pressed");
-        html += mini("Release", "!plate traptrigger " + plateId + " release", "Fire when the plate is released");
-        html += mini("Both", "!plate traptrigger " + plateId + " both", "Fire on press and release");
+        html += mini("Press", "!mech traptrigger " + plateId + " press", "Fire when the plate is pressed");
+        html += mini("Release", "!mech traptrigger " + plateId + " release", "Fire when the plate is released");
+        html += mini("Both", "!mech traptrigger " + plateId + " both", "Fire on press and release");
         html += '<div style="margin-top:8px;font-weight:900;">Current trigger: <span style="color:#333;">' + esc(trapTriggerLabel(trap.trigger)) + "</span></div>";
         html += "</div>";
 
         html += '<div style="border:2px solid #111;border-radius:10px;padding:10px;margin-bottom:10px;">';
         html += '<div style="font-weight:900;font-size:16px;margin-bottom:6px;">Messaging</div>';
-        html += mini("Set message", "!plate trapmsg " + plateId + " ?{Trap message|}", "Optional narration when the trap fires");
+        html += mini("Set message", "!mech trapmsg " + plateId + " ?{Trap message|}", "Optional narration when the trap fires");
         html += '<div style="margin-top:8px;font-weight:900;">Message: <span style="color:#333;">' + esc(String(trap.message || "").trim() || "(none)") + "</span></div>";
         html += "</div>";
 
         if (trap.type === "damage") {
             html += '<div style="border:2px solid #111;border-radius:10px;padding:10px;margin-bottom:10px;background:#fafafa;">';
             html += '<div style="font-weight:900;font-size:16px;margin-bottom:6px;">Damage Settings</div>';
-            html += mini("Set damage", "!plate trapdamage " + plateId + " ?{Damage roll|1d6}", "Roll expression for the damage trap");
+            html += mini("Set damage", "!mech trapdamage " + plateId + " ?{Damage roll|1d6}", "Roll expression for the damage trap");
             html += '<div style="margin-top:8px;font-weight:900;">Damage: <span style="color:#333;">' + esc(trap.damage) + "</span></div>";
             html += "</div>";
         }
@@ -1339,14 +1339,14 @@ var PressurePlateDoors = PressurePlateDoors || (function () {
         if (trap.type === "save") {
             html += '<div style="border:2px solid #111;border-radius:10px;padding:10px;margin-bottom:10px;background:#fafafa;">';
             html += '<div style="font-weight:900;font-size:16px;margin-bottom:6px;">Save Settings</div>';
-            html += mini("Set save label", "!plate trapsavelabel " + plateId + " ?{Save label|DEX}", "Ability/check label");
-            html += mini("Set DC", "!plate trapsavedc " + plateId + " ?{Save DC|12}", "Difficulty class");
-            html += mini("Set success text", "!plate trapsavesuccessmsg " + plateId + " ?{Success text|}", "Text shown on success");
-            html += mini("Set fail text", "!plate trapsavefailmsg " + plateId + " ?{Fail text|}", "Text shown on fail");
-            html += mini("Success: HALF", "!plate trapsavesuccess " + plateId + " half", "Success takes half damage");
-            html += mini("Success: NONE", "!plate trapsavesuccess " + plateId + " none", "Success takes no damage");
-            html += mini("Set damage type", "!plate trapsavedmgtype " + plateId + " ?{Damage type|piercing|slashing|bludgeoning|acid|cold|fire|force|lightning|necrotic|poison|psychic|radiant|thunder}", "Associated damage type");
-            html += mini("Set fail damage", "!plate trapsavefaildmg " + plateId + " ?{Fail damage|1d6}", "Optional fail damage");
+            html += mini("Set save label", "!mech trapsavelabel " + plateId + " ?{Save label|DEX}", "Ability/check label");
+            html += mini("Set DC", "!mech trapsavedc " + plateId + " ?{Save DC|12}", "Difficulty class");
+            html += mini("Set success text", "!mech trapsavesuccessmsg " + plateId + " ?{Success text|}", "Text shown on success");
+            html += mini("Set fail text", "!mech trapsavefailmsg " + plateId + " ?{Fail text|}", "Text shown on fail");
+            html += mini("Success: HALF", "!mech trapsavesuccess " + plateId + " half", "Success takes half damage");
+            html += mini("Success: NONE", "!mech trapsavesuccess " + plateId + " none", "Success takes no damage");
+            html += mini("Set damage type", "!mech trapsavedmgtype " + plateId + " ?{Damage type|piercing|slashing|bludgeoning|acid|cold|fire|force|lightning|necrotic|poison|psychic|radiant|thunder}", "Associated damage type");
+            html += mini("Set fail damage", "!mech trapsavefaildmg " + plateId + " ?{Fail damage|1d6}", "Optional fail damage");
             html += '<div style="margin-top:8px;font-weight:900;">Save: <span style="color:#333;">' + esc(String(trap.save.label).toUpperCase()) + " DC " + esc(String(trap.save.dc)) + "</span></div>";
             html += '<div style="margin-top:4px;font-weight:900;">Success: <span style="color:#333;">' + esc(String(trap.save.successMsg || "").trim() || "(none)") + "</span></div>";
             html += '<div style="margin-top:4px;font-weight:900;">Success result: <span style="color:#333;">' + esc(String(trap.save.successMode || "none").toUpperCase()) + "</span></div>";
@@ -1359,8 +1359,8 @@ var PressurePlateDoors = PressurePlateDoors || (function () {
         if (trap.type === "status") {
             html += '<div style="border:2px solid #111;border-radius:10px;padding:10px;margin-bottom:10px;background:#fafafa;">';
             html += '<div style="font-weight:900;font-size:16px;margin-bottom:6px;">Status Settings</div>';
-            html += mini("Set markers", "!plate trapstatusmarkers " + plateId + " ?{Markers (comma-separated)|cobweb}", "Token status markers to apply");
-            html += mini(trap.status.clearOnRelease ? "Clear on release: ON" : "Clear on release: OFF", "!plate trapstatusclear " + plateId, "Toggle removal when the plate releases");
+            html += mini("Set markers", "!mech trapstatusmarkers " + plateId + " ?{Markers (comma-separated)|cobweb}", "Token status markers to apply");
+            html += mini(trap.status.clearOnRelease ? "Clear on release: ON" : "Clear on release: OFF", "!mech trapstatusclear " + plateId, "Toggle removal when the plate releases");
             html += '<div style="margin-top:8px;font-weight:900;">Markers: <span style="color:#333;">' + esc(describeStatusMarkers(trap)) + "</span></div>";
             html += '<div style="margin-top:4px;font-weight:900;">Clear on release: <span style="color:#333;">' + esc(trap.status.clearOnRelease ? "ON (press-trigger only)" : "OFF") + "</span></div>";
             html += "</div>";
@@ -1369,8 +1369,8 @@ var PressurePlateDoors = PressurePlateDoors || (function () {
         if (trap.type === "teleport") {
             html += '<div style="border:2px solid #111;border-radius:10px;padding:10px;margin-bottom:10px;background:#fafafa;">';
             html += '<div style="font-weight:900;font-size:16px;margin-bottom:6px;">Teleport Settings</div>';
-            html += mini("Set destination from selection", "!plate trapsetteleport " + plateId, "Select one marker graphic, then click");
-            html += mini("Clear destination", "!plate trapclearteleport " + plateId, "Remove teleport destination");
+            html += mini("Set destination from selection", "!mech trapsetteleport " + plateId, "Select one marker graphic, then click");
+            html += mini("Clear destination", "!mech trapclearteleport " + plateId, "Remove teleport destination");
             html += '<div style="margin-top:8px;font-weight:900;">Destination: <span style="color:#333;">' + esc(describeTeleportDestination(trap)) + "</span></div>";
             html += "</div>";
         }
@@ -1378,8 +1378,8 @@ var PressurePlateDoors = PressurePlateDoors || (function () {
         if (trap.type === "reveal") {
             html += '<div style="border:2px solid #111;border-radius:10px;padding:10px;margin-bottom:10px;background:#fafafa;">';
             html += '<div style="font-weight:900;font-size:16px;margin-bottom:6px;">Reveal Settings</div>';
-            html += mini("Set reveal targets from selection", "!plate trapsetreveal " + plateId, "Select graphics or doors to reveal, then click");
-            html += mini("Clear reveal targets", "!plate trapclearreveal " + plateId, "Remove reveal target list");
+            html += mini("Set reveal targets from selection", "!mech trapsetreveal " + plateId, "Select graphics or doors to reveal, then click");
+            html += mini("Clear reveal targets", "!mech trapclearreveal " + plateId, "Remove reveal target list");
             html += '<div style="margin-top:8px;font-weight:900;">Targets: <span style="color:#333;">' + esc(describeRevealTargets(trap)) + "</span></div>";
             html += "</div>";
         }
@@ -1387,20 +1387,20 @@ var PressurePlateDoors = PressurePlateDoors || (function () {
         if (trap.type === "spawn") {
             html += '<div style="border:2px solid #111;border-radius:10px;padding:10px;margin-bottom:10px;background:#fafafa;">';
             html += '<div style="font-weight:900;font-size:16px;margin-bottom:6px;">Spawn Settings</div>';
-            html += mini("Set spawn targets from selection", "!plate trapsetspawn " + plateId, "Select one or more GM-layer graphics to reveal");
-            html += mini("Clear spawn targets", "!plate trapclearspawn " + plateId, "Remove spawn target list");
+            html += mini("Set spawn targets from selection", "!mech trapsetspawn " + plateId, "Select one or more GM-layer graphics to reveal");
+            html += mini("Clear spawn targets", "!mech trapclearspawn " + plateId, "Remove spawn target list");
             html += '<div style="margin-top:8px;font-weight:900;">Targets: <span style="color:#333;">' + esc(describeSpawnTargets(trap)) + "</span></div>";
             html += "</div>";
         }
 
         html += '<div style="border:2px solid #111;border-radius:10px;padding:10px;margin-bottom:10px;">';
         html += '<div style="font-weight:900;font-size:16px;margin-bottom:6px;">Extra Effects</div>';
-        if (trap.type !== "reveal") html += mini(trap.effects.revealAlso ? "Reveal targets: ON" : "Reveal targets: OFF", "!plate traprevealtoggle " + plateId, "Toggle revealing configured targets when this trap triggers");
-        html += mini("Set reveal targets", "!plate trapsetreveal " + plateId, "Select graphics or doors to reveal, then click");
-        html += mini("Clear reveal targets", "!plate trapclearreveal " + plateId, "Remove reveal target list");
-        html += mini(trap.effects.lockToken ? "Lock token: ON" : "Lock token: OFF", "!plate traplocktoggle " + plateId, "Toggle immobilizing tokens hit by this trap");
-        html += mini("Set lock marker", "!plate traplockmarker " + plateId + " ?{Lock marker|fishing-net}", "Marker added to locked tokens");
-        html += mini("Unlock tokens", "!plate trapunlock " + plateId, "Clear tokens currently locked by this plate");
+        if (trap.type !== "reveal") html += mini(trap.effects.revealAlso ? "Reveal targets: ON" : "Reveal targets: OFF", "!mech traprevealtoggle " + plateId, "Toggle revealing configured targets when this trap triggers");
+        html += mini("Set reveal targets", "!mech trapsetreveal " + plateId, "Select graphics or doors to reveal, then click");
+        html += mini("Clear reveal targets", "!mech trapclearreveal " + plateId, "Remove reveal target list");
+        html += mini(trap.effects.lockToken ? "Lock token: ON" : "Lock token: OFF", "!mech traplocktoggle " + plateId, "Toggle immobilizing tokens hit by this trap");
+        html += mini("Set lock marker", "!mech traplockmarker " + plateId + " ?{Lock marker|fishing-net}", "Marker added to locked tokens");
+        html += mini("Unlock tokens", "!mech trapunlock " + plateId, "Clear tokens currently locked by this plate");
         if (trap.type !== "reveal") html += '<div style="margin-top:8px;font-weight:900;">Reveal effect: <span style="color:#333;">' + esc(trap.effects.revealAlso ? "ON" : "OFF") + "</span></div>";
         html += '<div style="margin-top:4px;font-weight:900;">Reveal targets: <span style="color:#333;">' + esc(describeRevealTargets(trap)) + "</span></div>";
         html += '<div style="margin-top:8px;font-weight:900;">Lock effect: <span style="color:#333;">' + esc(trap.effects.lockToken ? "ON" : "OFF") + "</span></div>";
@@ -1414,7 +1414,7 @@ var PressurePlateDoors = PressurePlateDoors || (function () {
 
     /* ---------- commands: groups ---------- */
     function cmdGroupMakeFromSelected(msg, name, required) {
-        if (!name) { whisper("Usage: <code>!plate groupmake NAME [K]</code>"); return; }
+        if (!name) { whisper("Usage: <code>!mech groupmake NAME [K]</code>"); return; }
         if (!requireConfigEditable(name)) return;
 
         var g = getOrCreateGroup(name);
@@ -1442,7 +1442,7 @@ var PressurePlateDoors = PressurePlateDoors || (function () {
     }
 
     function cmdGroupAddPlates(msg, name) {
-        if (!name) { whisper("Usage: <code>!plate groupaddplates NAME</code>"); return; }
+        if (!name) { whisper("Usage: <code>!mech groupaddplates NAME</code>"); return; }
         if (!requireConfigEditable(name)) return;
 
         var g = getOrCreateGroup(name);
@@ -1466,12 +1466,12 @@ var PressurePlateDoors = PressurePlateDoors || (function () {
     }
 
     function cmdGroupAddDoors(msg, name, mode) {
-        if (!name) { whisper("Usage: <code>!plate groupadddoors NAME lock|secret</code>"); return; }
+        if (!name) { whisper("Usage: <code>!mech groupadddoors NAME lock|secret</code>"); return; }
         if (!requireConfigEditable(name)) return;
 
         mode = (mode || "").toLowerCase();
         if (mode !== "lock" && mode !== "secret") {
-            whisper("Usage: select Door object(s), then <code>!plate groupadddoors " + esc(name) + " lock</code> or <code>... secret</code>.");
+            whisper("Usage: select Door object(s), then <code>!mech groupadddoors " + esc(name) + " lock</code> or <code>... secret</code>.");
             return;
         }
 
@@ -1630,7 +1630,7 @@ var PressurePlateDoors = PressurePlateDoors || (function () {
 
         // header
         html += '<div style="background:#000;color:#fff;padding:10px 12px;">';
-        html += '<div style="font-weight:900;font-size:20px;">Pressure Plate List</div>';
+        html += '<div style="font-weight:900;font-size:20px;">Mechanism List</div>';
         html += '<div style="color:#cfcfcf;font-weight:900;font-size:12px;margin-top:2px;">UI Page: ' + esc(pageName) + ' (…' + esc(shortId(pageId)) + ')</div>';
         html += "</div>";
 
@@ -1640,28 +1640,28 @@ var PressurePlateDoors = PressurePlateDoors || (function () {
         // global controls
         html += '<div style="border:2px solid #111;border-radius:10px;padding:10px;margin-bottom:10px;">';
         html += '<div style="font-weight:900;font-size:16px;margin-bottom:6px;">Controls</div>';
-        html += iconBtn("🧱", "!plate make ?{Plate name|Pressure_Plate}", "Make Plate from selected (moves to GM layer)");
-        html += iconBtn("🧭", "!plate setpage", "Use Current Page (Set)");
-        html += iconBtn("🔄", "!plate ui", "Refresh UI");
-        html += iconBtn("✅", "!plate check", "Force Check all plates/groups");
+        html += iconBtn("🧱", "!mech make ?{Plate name|Pressure_Plate}", "Make Plate from selected (moves to GM layer)");
+        html += iconBtn("🧭", "!mech setpage", "Use Current Page (Set)");
+        html += iconBtn("🔄", "!mech ui", "Refresh UI");
+        html += iconBtn("✅", "!mech check", "Force Check all plates/groups");
         html += "</div>";
 
         // group tools
         html += '<div style="border:2px solid #111;border-radius:10px;padding:10px;margin-bottom:10px;background:#fafafa;">';
-        html += '<div style="font-weight:900;font-size:16px;margin-bottom:6px;">Group Tools</div>';
+        html += '<div style="font-weight:900;font-size:16px;margin-bottom:6px;">Multi-Source Tools</div>';
         html += '<div style="color:#333;font-weight:900;margin-bottom:8px;">Suggested name: <span style="font-family:monospace;">' + esc(suggested) + "</span></div>";
 
-        html += mini("Create group from selected plates", "!plate groupmake ?{Group Name (no spaces)|" + esc(suggested) + "} ?{Required K (0=ALL)|0}", "Create/Update group and add selected plates");
-        html += mini("Add selected plates to group", "!plate groupaddplates ?{Group Name (no spaces)|" + esc(suggested) + "}", "Add selected plates to named group");
-        html += mini("Add selected doors LOCK", "!plate groupadddoors ?{Group Name (no spaces)|" + esc(suggested) + "} lock", "Bind selected door(s) to group as LOCK");
-        html += mini("Add selected doors SECRET", "!plate groupadddoors ?{Group Name (no spaces)|" + esc(suggested) + "} secret", "Bind selected door(s) to group as SECRET");
+        html += mini("Create group from selected plates", "!mech groupmake ?{Group Name (no spaces)|" + esc(suggested) + "} ?{Required K (0=ALL)|0}", "Create/Update group and add selected plates");
+        html += mini("Add selected plates to group", "!mech groupaddplates ?{Group Name (no spaces)|" + esc(suggested) + "}", "Add selected plates to named group");
+        html += mini("Add selected doors LOCK", "!mech groupadddoors ?{Group Name (no spaces)|" + esc(suggested) + "} lock", "Bind selected door(s) to group as LOCK");
+        html += mini("Add selected doors SECRET", "!mech groupadddoors ?{Group Name (no spaces)|" + esc(suggested) + "} secret", "Bind selected door(s) to group as SECRET");
         html += "</div>";
 
         /* ---------- singles ---------- */
         html += '<div style="border:2px solid #111;border-radius:10px;margin-bottom:12px;">';
         html += '<div style="padding:8px 10px;border-bottom:2px solid #111;background:#f3f4f6;">';
-        html += '<span style="font-weight:900;font-size:18px;">Single Plates</span>';
-        html += '<span style="color:#444;font-weight:900;margin-left:10px;">(1 plate → doors)</span>';
+        html += '<span style="font-weight:900;font-size:18px;">Single-Source Mechanisms</span>';
+        html += '<span style="color:#444;font-weight:900;margin-left:10px;">(1 trigger → doors/effects)</span>';
         html += "</div>";
 
         var anySingle = false;
@@ -1688,17 +1688,17 @@ var PressurePlateDoors = PressurePlateDoors || (function () {
             html += "</div>";
 
             html += '<div style="padding:8px 10px;">';
-            html += iconBtn("🔍", "!plate ping " + pid, "Ping plate");
-            html += iconBtn("✅", "!plate checkplate " + pid, "Check plate");
-            html += iconBtn("⬆️", "!plate simopen " + pid, "Force open (simulate pressed)");
-            html += iconBtn("⬇️", "!plate simclose " + pid, "Force close (simulate released)");
-            html += iconBtn("🗑️", "!plate removeplate " + pid, "Remove plate");
-            html += iconBtn("🔗", "!plate add lock", "Bind selected Door(s) to the selected plate as LOCK");
-            html += iconBtn("👁️", "!plate add secret", "Bind selected Door(s) to the selected plate as SECRET");
-            html += iconBtn("💣", "!plate trapui " + pid, trapEnabled ? "Open trap configuration" : "Convert this plate into a trap");
+            html += iconBtn("🔍", "!mech ping " + pid, "Ping trigger");
+            html += iconBtn("✅", "!mech checkplate " + pid, "Check mechanism");
+            html += iconBtn("⬆️", "!mech simopen " + pid, "Force open (simulate triggered)");
+            html += iconBtn("⬇️", "!mech simclose " + pid, "Force close (simulate released)");
+            html += iconBtn("🗑️", "!mech removeplate " + pid, "Remove trigger");
+            html += iconBtn("🔗", "!mech add lock", "Bind selected Door(s) to the selected trigger as LOCK");
+            html += iconBtn("👁️", "!mech add secret", "Bind selected Door(s) to the selected trigger as SECRET");
+            html += iconBtn("💣", "!mech trapui " + pid, trapEnabled ? "Open mechanism configuration" : "Add trap/effects to this trigger");
             // messages
-            html += iconBtn("📣", "!plate platemsgon " + pid + " ?{Trigger message (plate pressed)|}", "Set trigger message (plate pressed)");
-            html += iconBtn("🔕", "!plate platemsgoff " + pid + " ?{Release message (plate released)|}", "Set release message (plate released)");
+            html += iconBtn("📣", "!mech platemsgon " + pid + " ?{Trigger message (plate pressed)|}", "Set trigger message (plate pressed)");
+            html += iconBtn("🔕", "!mech platemsgoff " + pid + " ?{Release message (plate released)|}", "Set release message (plate released)");
 
             if (String(pdata.msgOn || "").trim()) {
                 html += '<div style="margin-top:6px;color:#111;font-weight:900;">On: <span style="font-weight:700;">' + esc(pdata.msgOn) + "</span></div>";
@@ -1715,10 +1715,10 @@ var PressurePlateDoors = PressurePlateDoors || (function () {
                 linked.push("…" + shortId(did));
             }
 
-            html += '<div style="margin-top:6px;font-weight:900;">linked to: <span style="font-weight:900;color:#333;">' +
+            html += '<div style="margin-top:6px;font-weight:900;">doors: <span style="font-weight:900;color:#333;">' +
                 (hasDoors ? esc(linked.join(", ")) : "(none)") + "</span></div>";
 
-            html += '<div style="margin-top:6px;font-weight:900;">trap: <span style="font-weight:900;color:#333;">' +
+            html += '<div style="margin-top:6px;font-weight:900;">effects: <span style="font-weight:900;color:#333;">' +
                 esc(trapEnabled ? (trapTypeLabel(trap.type) + " / " + trapTriggerLabel(trap.trigger)) : "(disabled)") + "</span></div>";
 
             for (var did2 in doors) {
@@ -1734,7 +1734,7 @@ var PressurePlateDoors = PressurePlateDoors || (function () {
         }
 
         if (!anySingle) {
-            html += '<div style="padding:10px;color:#666;font-weight:900;">(No single plates on this page)</div>';
+            html += '<div style="padding:10px;color:#666;font-weight:900;">(No single-source mechanisms on this page)</div>';
         }
 
         html += "</div>";
@@ -1742,8 +1742,8 @@ var PressurePlateDoors = PressurePlateDoors || (function () {
         /* ---------- groups ---------- */
         html += '<div style="border:2px solid #111;border-radius:10px;">';
         html += '<div style="padding:8px 10px;border-bottom:2px solid #111;background:#f3f4f6;">';
-        html += '<span style="font-weight:900;font-size:18px;">Groups</span>';
-        html += '<span style="color:#444;font-weight:900;margin-left:10px;">(K-of-N plates → doors)</span>';
+        html += '<span style="font-weight:900;font-size:18px;">Multi-Source Mechanisms</span>';
+        html += '<span style="color:#444;font-weight:900;margin-left:10px;">(K-of-N triggers → doors/effects)</span>';
         html += "</div>";
 
         var anyGroup = false;
@@ -1752,7 +1752,7 @@ var PressurePlateDoors = PressurePlateDoors || (function () {
             if (!st.groups.hasOwnProperty(gname)) continue;
             var g = st.groups[gname];
 
-            // show only if any plate in group is on this page
+            // show only if any trigger in group is on this page
             var show = false;
             for (var j = 0; j < g.plates.length; j++) {
                 var gp = getObj("graphic", g.plates[j]);
@@ -1790,20 +1790,20 @@ var PressurePlateDoors = PressurePlateDoors || (function () {
             html += '<div style="padding:8px 10px;">';
 
             // always-available controls
-            html += iconBtn(lockIcon, "!plate grouplock " + gname, g.locked ? "Unlock mechanism" : "Lock mechanism (disable)");
-            html += iconBtn("✅", "!plate groupcheck " + gname, "Check group now");
-            html += iconBtn(cfgIcon, "!plate groupcfglock " + gname, g.cfgLocked ? "Unlock config (allow edits)" : "Lock config (prevent edits)");
+            html += iconBtn(lockIcon, "!mech grouplock " + gname, g.locked ? "Unlock mechanism" : "Lock mechanism (disable)");
+            html += iconBtn("✅", "!mech groupcheck " + gname, "Check group now");
+            html += iconBtn(cfgIcon, "!mech groupcfglock " + gname, g.cfgLocked ? "Unlock config (allow edits)" : "Lock config (prevent edits)");
 
-            if (g.cfgLocked) html += iconBtn("⚡", "!plate groupoverride " + gname, "Override config lock for 60s");
+            if (g.cfgLocked) html += iconBtn("⚡", "!mech groupoverride " + gname, "Override config lock for 60s");
             else html += iconBtnDisabled("⚡", "Override only needed when config locked");
 
             // auto-lock toggle
             if (editBlocked) html += iconBtnDisabled(autoIcon, "Config locked (use Override to change auto-lock)");
-            else html += iconBtn(autoIcon, "!plate groupautolock " + gname, g.autoLock ? "Auto-lock after first trigger: ON (click to disable)" : "Auto-lock after first trigger: OFF (click to enable)");
+            else html += iconBtn(autoIcon, "!mech groupautolock " + gname, g.autoLock ? "Auto-lock after first trigger: ON (click to disable)" : "Auto-lock after first trigger: OFF (click to enable)");
 
             // reset trigger
             if (editBlocked) html += iconBtnDisabled("🔁", "Config locked (use Override to reset trigger)");
-            else html += iconBtn("🔁", "!plate groupreset " + gname, "Reset hasTriggered (and unfreeze if auto-locked)");
+            else html += iconBtn("🔁", "!mech groupreset " + gname, "Reset hasTriggered (and unfreeze if auto-locked)");
 
             // edit controls
             if (editBlocked) {
@@ -1812,10 +1812,10 @@ var PressurePlateDoors = PressurePlateDoors || (function () {
                 html += iconBtnDisabled("👁️", "Config locked");
                 html += iconBtnDisabled("🗑️", "Config locked");
             } else {
-                html += iconBtn("➕", "!plate groupaddplates " + gname, "Add selected plates to this group");
-                html += iconBtn("🔗", "!plate groupadddoors " + gname + " lock", "Add selected doors as LOCK");
-                html += iconBtn("👁️", "!plate groupadddoors " + gname + " secret", "Add selected doors as SECRET");
-                html += iconBtn("🗑️", "!plate groupremove " + gname, "Remove group");
+                html += iconBtn("➕", "!mech groupaddplates " + gname, "Add selected triggers to this mechanism");
+                html += iconBtn("🔗", "!mech groupadddoors " + gname + " lock", "Add selected doors as LOCK");
+                html += iconBtn("👁️", "!mech groupadddoors " + gname + " secret", "Add selected doors as SECRET");
+                html += iconBtn("🗑️", "!mech groupremove " + gname, "Remove group");
             }
 
             // group messages (edit-gated)
@@ -1823,8 +1823,8 @@ var PressurePlateDoors = PressurePlateDoors || (function () {
                 html += iconBtnDisabled("📣", "Config locked");
                 html += iconBtnDisabled("🔕", "Config locked");
             } else {
-                html += iconBtn("📣", "!plate groupmsgon " + gname + " ?{Trigger message (group active)|}", "Set trigger message (group active)");
-                html += iconBtn("🔕", "!plate groupmsgoff " + gname + " ?{Release message (group inactive)|}", "Set release message (group inactive)");
+                html += iconBtn("📣", "!mech groupmsgon " + gname + " ?{Trigger message (group active)|}", "Set trigger message (group active)");
+                html += iconBtn("🔕", "!mech groupmsgoff " + gname + " ?{Release message (group inactive)|}", "Set release message (group inactive)");
             }
 
             if (String(g.msgOn || "").trim()) {
@@ -1840,12 +1840,12 @@ var PressurePlateDoors = PressurePlateDoors || (function () {
                 html += miniDisabled("Require ALL", "Config locked");
                 html += miniDisabled("Set K…", "Config locked");
             } else {
-                html += mini("Require ALL", "!plate groupsetall " + gname, "Require ALL plates in group");
-                html += mini("Set K…", "!plate groupsetk " + gname + " ?{Require how many plates?|2}", "Set required K (K-of-N)");
+                html += mini("Require ALL", "!mech groupsetall " + gname, "Require ALL plates in group");
+                html += mini("Set K…", "!mech groupsetk " + gname + " ?{Require how many plates?|2}", "Set required K (K-of-N)");
             }
 
             // plates list
-            html += '<div style="margin-top:10px;font-weight:900;">Plates (this page)</div>';
+            html += '<div style="margin-top:10px;font-weight:900;">Triggers (this page)</div>';
             var anyPlateListed = false;
             for (var k = 0; k < g.plates.length; k++) {
                 var pp = getObj("graphic", g.plates[k]);
@@ -1859,15 +1859,15 @@ var PressurePlateDoors = PressurePlateDoors || (function () {
 
                 html += '<div style="margin-left:12px;margin-top:6px;font-weight:900;">' +
                     esc(pname) + badge(pocc ? "DOWN" : "UP", pocc) +
-                    mini("Ping", "!plate ping " + pp.id, "Ping this plate");
+                    mini("Ping", "!mech ping " + pp.id, "Ping this trigger");
 
                 if (editBlocked) html += miniDisabled("Remove", "Config locked");
-                else html += mini("Remove", "!plate groupdelplate " + gname + " " + pp.id, "Remove this plate from the group");
+                else html += mini("Remove", "!mech groupdelplate " + gname + " " + pp.id, "Remove this trigger from the mechanism");
 
                 html += "</div>";
             }
             if (!anyPlateListed) {
-                html += '<div style="margin-left:12px;margin-top:6px;color:#666;font-weight:900;">(No plates from this group on this page)</div>';
+                html += '<div style="margin-left:12px;margin-top:6px;color:#666;font-weight:900;">(No triggers from this mechanism on this page)</div>';
             }
 
             // doors list
@@ -1884,7 +1884,7 @@ var PressurePlateDoors = PressurePlateDoors || (function () {
                     ' <span style="color:#666;">(' + esc(doorBits(d3)) + ")</span> ";
 
                 if (editBlocked) html += miniDisabled("Detach", "Config locked");
-                else html += mini("Detach", "!plate groupdeldor " + gname + " " + did3, "Detach this door from group");
+                else html += mini("Detach", "!mech groupdeldor " + gname + " " + did3, "Detach this door from group");
 
                 html += "</div>";
             }
@@ -1896,7 +1896,7 @@ var PressurePlateDoors = PressurePlateDoors || (function () {
         }
 
         if (!anyGroup) {
-            html += '<div style="padding:10px;color:#666;font-weight:900;">(No groups on this page)</div>';
+            html += '<div style="padding:10px;color:#666;font-weight:900;">(No multi-source mechanisms on this page)</div>';
         }
 
         html += "</div>"; // groups card
@@ -1947,7 +1947,7 @@ var PressurePlateDoors = PressurePlateDoors || (function () {
         if (!playerIsGM(msg.playerid)) return;
 
         var parts = msg.content.split(/\s+/);
-        if (parts[0] !== "!plate") return;
+        if (parts[0] !== "!mech") return;
 
         var sub = (parts[1] || "").toLowerCase();
         var a = parts[2];
@@ -2028,27 +2028,27 @@ var PressurePlateDoors = PressurePlateDoors || (function () {
 
         whisper(
             "Commands:<br>" +
-            "<code>!plate ui</code>, <code>!plate setpage</code>, <code>!plate make NAME</code>, <code>!plate add lock|secret</code>, <code>!plate check</code>, <code>!plate ping PLATEID</code><br>" +
-            "Trap UI:<br><code>!plate trapui PLATEID</code>, <code>!plate traptoggle PLATEID</code>, <code>!plate traptype PLATEID alarm|damage|teleport|reveal|save|status|spawn|none</code><br>" +
-            "<code>!plate traptrigger PLATEID press|release|both</code>, <code>!plate trapmsg PLATEID ...</code>, <code>!plate trapdamage PLATEID XdY</code><br>" +
-            "<code>!plate trapsavelabel PLATEID LABEL</code>, <code>!plate trapsavedc PLATEID DC</code>, <code>!plate trapsavesuccessmsg PLATEID ...</code>, <code>!plate trapsavefailmsg PLATEID ...</code><br>" +
-            "<code>!plate trapsavesuccess PLATEID half|none</code>, <code>!plate trapsavedmgtype PLATEID TYPE</code>, <code>!plate trapsavefaildmg PLATEID XdY</code>, <code>!plate trapstatusmarkers PLATEID marker1,marker2</code>, <code>!plate trapstatusclear PLATEID</code><br>" +
-            "<code>!plate trapsetteleport PLATEID</code>, <code>!plate trapclearteleport PLATEID</code>, <code>!plate trapsetreveal PLATEID</code>, <code>!plate trapclearreveal PLATEID</code>, <code>!plate traprevealtoggle PLATEID</code><br>" +
-            "<code>!plate trapsetspawn PLATEID</code>, <code>!plate trapclearspawn PLATEID</code>, <code>!plate traplocktoggle PLATEID</code>, <code>!plate traplockmarker PLATEID MARKER</code>, <code>!plate trapunlock PLATEID</code><br>" +
-            "Plate Messages:<br><code>!plate platemsgon PLATEID ...</code>, <code>!plate platemsgoff PLATEID ...</code><br>" +
+            "<code>!mech ui</code>, <code>!mech setpage</code>, <code>!mech make NAME</code>, <code>!mech add lock|secret</code>, <code>!mech check</code>, <code>!mech ping PLATEID</code><br>" +
+            "Trap UI:<br><code>!mech trapui PLATEID</code>, <code>!mech traptoggle PLATEID</code>, <code>!mech traptype PLATEID alarm|damage|teleport|reveal|save|status|spawn|none</code><br>" +
+            "<code>!mech traptrigger PLATEID press|release|both</code>, <code>!mech trapmsg PLATEID ...</code>, <code>!mech trapdamage PLATEID XdY</code><br>" +
+            "<code>!mech trapsavelabel PLATEID LABEL</code>, <code>!mech trapsavedc PLATEID DC</code>, <code>!mech trapsavesuccessmsg PLATEID ...</code>, <code>!mech trapsavefailmsg PLATEID ...</code><br>" +
+            "<code>!mech trapsavesuccess PLATEID half|none</code>, <code>!mech trapsavedmgtype PLATEID TYPE</code>, <code>!mech trapsavefaildmg PLATEID XdY</code>, <code>!mech trapstatusmarkers PLATEID marker1,marker2</code>, <code>!mech trapstatusclear PLATEID</code><br>" +
+            "<code>!mech trapsetteleport PLATEID</code>, <code>!mech trapclearteleport PLATEID</code>, <code>!mech trapsetreveal PLATEID</code>, <code>!mech trapclearreveal PLATEID</code>, <code>!mech traprevealtoggle PLATEID</code><br>" +
+            "<code>!mech trapsetspawn PLATEID</code>, <code>!mech trapclearspawn PLATEID</code>, <code>!mech traplocktoggle PLATEID</code>, <code>!mech traplockmarker PLATEID MARKER</code>, <code>!mech trapunlock PLATEID</code><br>" +
+            "Plate Messages:<br><code>!mech platemsgon PLATEID ...</code>, <code>!mech platemsgoff PLATEID ...</code><br>" +
             "Groups:<br>" +
-            "<code>!plate grouplock NAME</code> (mechanism lock), <code>!plate groupcfglock NAME</code> (config lock), <code>!plate groupoverride NAME</code> (60s override)<br>" +
-            "<code>!plate groupautolock NAME</code>, <code>!plate groupreset NAME</code><br>" +
-            "<code>!plate groupmake NAME [K]</code>, <code>!plate groupaddplates NAME</code>, <code>!plate groupadddoors NAME lock|secret</code><br>" +
-            "<code>!plate groupmsgon NAME ...</code>, <code>!plate groupmsgoff NAME ...</code><br>" +
-            "<code>!plate groupdelplate NAME PLATEID</code>, <code>!plate groupdeldor NAME DOORID</code>, <code>!plate groupremove NAME</code>"
+            "<code>!mech grouplock NAME</code> (mechanism lock), <code>!mech groupcfglock NAME</code> (config lock), <code>!mech groupoverride NAME</code> (60s override)<br>" +
+            "<code>!mech groupautolock NAME</code>, <code>!mech groupreset NAME</code><br>" +
+            "<code>!mech groupmake NAME [K]</code>, <code>!mech groupaddplates NAME</code>, <code>!mech groupadddoors NAME lock|secret</code><br>" +
+            "<code>!mech groupmsgon NAME ...</code>, <code>!mech groupmsgoff NAME ...</code><br>" +
+            "<code>!mech groupdelplate NAME PLATEID</code>, <code>!mech groupdeldor NAME DOORID</code>, <code>!mech groupremove NAME</code>"
         );
     });
 
     on("ready", function () {
         ensureState();
         evaluateAll();
-        sendChat("", "/w gm Loaded ✅  UI: !plate ui   (State key: " + STATE + ")");
+        sendChat("", "/w gm Loaded ✅  UI: !mech ui   (State key: " + STATE + ")");
     });
 
     return {};

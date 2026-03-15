@@ -1,4 +1,4 @@
-Pressure Plate Doors (Roll20 API)
+Trigger Mechanisms (Roll20 API)
 
 A full-featured pressure plate and door control system for Roll20.
 
@@ -91,14 +91,14 @@ Save.
 
 Open the UI with:
 
-!plate ui
+!mech ui
 
 Basic Usage
 Create a Plate
 
 Select one or more tokens and run:
 
-!plate make PlateName
+!mech make PlateName
 
 
 Plate tokens are automatically moved to the GM layer.
@@ -113,22 +113,22 @@ One or more Door Tool doors
 
 Then run:
 
-!plate add lock
+!mech add lock
 
 
 or
 
-!plate add secret
+!mech add secret
 
 Convert a Plate into a Trap
 
 Open the main UI:
 
-!plate ui
+!mech ui
 
 Then click the trap button on a plate, or open the trap UI directly:
 
-!plate trapui PLATEID
+!mech trapui PLATEID
 
 From the trap UI you can:
 
@@ -150,25 +150,25 @@ Teleport traps:
 
 Select one destination marker token/graphic, then use:
 
-!plate trapsetteleport PLATEID
+!mech trapsetteleport PLATEID
 
 Reveal traps:
 
 Select one or more hidden graphics or secret doors, then use:
 
-!plate trapsetreveal PLATEID
+!mech trapsetreveal PLATEID
 
 Spawn traps:
 
 Select one or more GM-layer graphics to reveal on trigger, then use:
 
-!plate trapsetspawn PLATEID
+!mech trapsetspawn PLATEID
 
 Status traps:
 
 Use comma-separated Roll20 status marker names, for example:
 
-!plate trapstatusmarkers PLATEID cobweb,poisoned
+!mech trapstatusmarkers PLATEID cobweb,poisoned
 
 Lock token effect:
 
@@ -176,79 +176,79 @@ When enabled, triggered token(s) are snapped back to their locked position until
 
 Use:
 
-!plate trapunlock PLATEID
+!mech trapunlock PLATEID
 
 Create a Group Puzzle
 
 Select multiple plate tokens:
 
-!plate groupmake PuzzleA 2
+!mech groupmake PuzzleA 2
 
 
 This creates a group requiring 2 plates.
 
 Add doors:
 
-!plate groupadddoors PuzzleA lock
+!mech groupadddoors PuzzleA lock
 
 Command Reference
-!plate ui
-!plate setpage
-!plate check
+!mech ui
+!mech setpage
+!mech check
 
-!plate make NAME
-!plate add lock
-!plate add secret
-!plate trapui PLATEID
-!plate traptoggle PLATEID
-!plate traptype PLATEID alarm|damage|teleport|reveal|save|status|spawn|none
-!plate traptrigger PLATEID press|release|both
-!plate trapmsg PLATEID message...
-!plate trapdamage PLATEID XdY
-!plate trapsavelabel PLATEID LABEL
-!plate trapsavedc PLATEID DC
-!plate trapsavesuccessmsg PLATEID message...
-!plate trapsavefailmsg PLATEID message...
-!plate trapsavesuccess PLATEID half|none
-!plate trapsavedmgtype PLATEID TYPE
-!plate trapsavefaildmg PLATEID XdY
-!plate trapstatusmarkers PLATEID marker1,marker2
-!plate trapstatusclear PLATEID
-!plate trapsetteleport PLATEID
-!plate trapclearteleport PLATEID
-!plate trapsetreveal PLATEID
-!plate trapclearreveal PLATEID
-!plate traprevealtoggle PLATEID
-!plate trapsetspawn PLATEID
-!plate trapclearspawn PLATEID
-!plate traplocktoggle PLATEID
-!plate traplockmarker PLATEID MARKER
-!plate trapunlock PLATEID
-!plate checkplate PLATEID
-!plate simopen PLATEID
-!plate simclose PLATEID
-!plate removeplate PLATEID
-!plate ping PLATEID
+!mech make NAME
+!mech add lock
+!mech add secret
+!mech trapui PLATEID
+!mech traptoggle PLATEID
+!mech traptype PLATEID alarm|damage|teleport|reveal|save|status|spawn|none
+!mech traptrigger PLATEID press|release|both
+!mech trapmsg PLATEID message...
+!mech trapdamage PLATEID XdY
+!mech trapsavelabel PLATEID LABEL
+!mech trapsavedc PLATEID DC
+!mech trapsavesuccessmsg PLATEID message...
+!mech trapsavefailmsg PLATEID message...
+!mech trapsavesuccess PLATEID half|none
+!mech trapsavedmgtype PLATEID TYPE
+!mech trapsavefaildmg PLATEID XdY
+!mech trapstatusmarkers PLATEID marker1,marker2
+!mech trapstatusclear PLATEID
+!mech trapsetteleport PLATEID
+!mech trapclearteleport PLATEID
+!mech trapsetreveal PLATEID
+!mech trapclearreveal PLATEID
+!mech traprevealtoggle PLATEID
+!mech trapsetspawn PLATEID
+!mech trapclearspawn PLATEID
+!mech traplocktoggle PLATEID
+!mech traplockmarker PLATEID MARKER
+!mech trapunlock PLATEID
+!mech checkplate PLATEID
+!mech simopen PLATEID
+!mech simclose PLATEID
+!mech removeplate PLATEID
+!mech ping PLATEID
 
-!plate platemsgon PLATEID message...
-!plate platemsgoff PLATEID message...
+!mech platemsgon PLATEID message...
+!mech platemsgoff PLATEID message...
 
-!plate groupmake NAME [K]
-!plate groupaddplates NAME
-!plate groupadddoors NAME lock
-!plate groupadddoors NAME secret
-!plate groupsetall NAME
-!plate groupsetk NAME K
+!mech groupmake NAME [K]
+!mech groupaddplates NAME
+!mech groupadddoors NAME lock
+!mech groupadddoors NAME secret
+!mech groupsetall NAME
+!mech groupsetk NAME K
 
-!plate grouplock NAME
-!plate groupcfglock NAME
-!plate groupoverride NAME
-!plate groupautolock NAME
-!plate groupreset NAME
+!mech grouplock NAME
+!mech groupcfglock NAME
+!mech groupoverride NAME
+!mech groupautolock NAME
+!mech groupreset NAME
 
-!plate groupremove NAME
-!plate groupdelplate NAME PLATEID
-!plate groupdeldor NAME DOORID
+!mech groupremove NAME
+!mech groupdelplate NAME PLATEID
+!mech groupdeldor NAME DOORID
 
 
 All commands have UI buttons.
@@ -326,36 +326,36 @@ Examples
 
 Dart trap with save-for-half
 
-!plate traptype PLATEID save
-!plate trapsavelabel PLATEID DEX
-!plate trapsavedc PLATEID 14
-!plate trapsavesuccess PLATEID half
-!plate trapsavedmgtype PLATEID piercing
-!plate trapsavefaildmg PLATEID 2d4
-!plate trapmsg PLATEID A volley of darts fires from the wall.
+!mech traptype PLATEID save
+!mech trapsavelabel PLATEID DEX
+!mech trapsavedc PLATEID 14
+!mech trapsavesuccess PLATEID half
+!mech trapsavedmgtype PLATEID piercing
+!mech trapsavefaildmg PLATEID 2d4
+!mech trapmsg PLATEID A volley of darts fires from the wall.
 
 Reveal-and-save trap
 
-!plate traptype PLATEID save
-!plate traprevealtoggle PLATEID
-!plate trapsavelabel PLATEID DEX
-!plate trapsavedc PLATEID 15
-!plate trapsavesuccess PLATEID none
-!plate trapsavedmgtype PLATEID fire
-!plate trapsavefaildmg PLATEID 3d6
-!plate trapmsg PLATEID Flame jets burst from hidden wall vents.
+!mech traptype PLATEID save
+!mech traprevealtoggle PLATEID
+!mech trapsavelabel PLATEID DEX
+!mech trapsavedc PLATEID 15
+!mech trapsavesuccess PLATEID none
+!mech trapsavedmgtype PLATEID fire
+!mech trapsavefaildmg PLATEID 3d6
+!mech trapmsg PLATEID Flame jets burst from hidden wall vents.
 
 Web snare trap
 
-!plate traptype PLATEID status
-!plate trapstatusmarkers PLATEID cobweb
-!plate traplocktoggle PLATEID
-!plate trapmsg PLATEID Sticky webbing erupts from the floor.
+!mech traptype PLATEID status
+!mech trapstatusmarkers PLATEID cobweb
+!mech traplocktoggle PLATEID
+!mech trapmsg PLATEID Sticky webbing erupts from the floor.
 
 Ambush spawn trap
 
-!plate traptype PLATEID spawn
-!plate trapmsg PLATEID Hidden attackers rush into the room.
+!mech traptype PLATEID spawn
+!mech trapmsg PLATEID Hidden attackers rush into the room.
 
 Backward Compatibility
 
@@ -367,7 +367,7 @@ State Persistence
 
 The script uses a persistent state key:
 
-PPD_CAMPAIGN_CORE
+TM_CAMPAIGN_CORE
 
 
 Do not change this key after deployment or bindings will appear lost.
