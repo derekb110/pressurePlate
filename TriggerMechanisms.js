@@ -129,11 +129,48 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         };
     }
 
+    function newMechanismData(id) {
+        return {
+            id: id,
+            kind: "single",
+            legacyId: "",
+            sourceKind: "pressurePlate",
+            name: "",
+            pageId: "",
+            sources: [],
+            rule: {
+                mode: "single",
+                k: 1,
+                timing: "press"
+            },
+            effects: {
+                doors: {},
+                trap: null
+            },
+            messages: {
+                on: "",
+                off: ""
+            },
+            locks: {
+                mechanismLocked: false,
+                freezeWhenLocked: false,
+                configLocked: false,
+                autoLock: false,
+                hasTriggered: false
+            },
+            runtime: {
+                lastActive: false,
+                lastOccupants: []
+            }
+        };
+    }
+
     /* ---------- state ---------- */
     function ensureState() {
         state[STATE] = state[STATE] || {
             plates: {},        // plateId -> { doors: { doorId: 'lock'|'secret' }, msgOn, msgOff, lastActive }
             groups: {},        // groupName -> { required, plates[], doors{}, locked, lockFreeze, cfgLocked, autoLock, hasTriggered, msgOn, msgOff, lastActive }
+            mechanisms: {},    // mechanismId -> normalized internal model for singles/groups
             uiPageId: null,
             last: 0,
             editOverride: {},  // groupName -> expiry timestamp
@@ -182,6 +219,7 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
             if (typeof g.lastActive === "undefined") g.lastActive = false;
         }
 
+        if (!st.mechanisms) st.mechanisms = {};
         if (!st.editOverride) st.editOverride = {};
         if (!st.lockedTokens) st.lockedTokens = {};
 
@@ -201,6 +239,128 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         p.trap = backfillTrapConfig(p.trap);
 
         return p;
+    }
+
+    function mechanismIdForPlate(plateId) {
+        return "single:" + plateId;
+    }
+
+    function mechanismIdForGroup(groupName) {
+        return "group:" + groupName;
+    }
+
+    function cloneDoorModes(doors) {
+        var out = {};
+        doors = doors || {};
+        for (var did in doors) {
+            if (!doors.hasOwnProperty(did)) continue;
+            out[did] = doors[did];
+        }
+        return out;
+    }
+
+    function ensureMechanismData(mechId) {
+        var st = ensureState();
+        st.mechanisms[mechId] = st.mechanisms[mechId] || newMechanismData(mechId);
+        return st.mechanisms[mechId];
+    }
+
+    function inferMechanismPageId(sourceIds) {
+        for (var i = 0; i < sourceIds.length; i++) {
+            var g = getObj("graphic", sourceIds[i]);
+            if (g) return g.get("_pageid");
+        }
+        return "";
+    }
+
+    function syncMechanismFromPlate(plateId) {
+        var plate = getObj("graphic", plateId);
+        var pdata = ensurePlateData(plateId);
+        var mechId = mechanismIdForPlate(plateId);
+        var mech = ensureMechanismData(mechId);
+
+        mech.kind = "single";
+        mech.legacyId = plateId;
+        mech.sourceKind = "pressurePlate";
+        mech.name = (plate && plate.get("name")) || ("Trigger …" + shortId(plateId));
+        mech.pageId = plate ? plate.get("_pageid") : "";
+        mech.sources = [plateId];
+        mech.rule.mode = "single";
+        mech.rule.k = 1;
+        mech.rule.timing = pdata.trap.trigger || "press";
+        mech.effects.doors = cloneDoorModes(pdata.doors);
+        mech.effects.trap = pdata.trap;
+        mech.messages.on = pdata.msgOn || "";
+        mech.messages.off = pdata.msgOff || "";
+        mech.locks.mechanismLocked = false;
+        mech.locks.freezeWhenLocked = false;
+        mech.locks.configLocked = false;
+        mech.locks.autoLock = false;
+        mech.locks.hasTriggered = false;
+        mech.runtime.lastActive = !!pdata.lastActive;
+        mech.runtime.lastOccupants = (pdata.lastOccupants || []).slice();
+
+        return mech;
+    }
+
+    function syncMechanismFromGroup(groupName) {
+        var st = ensureState();
+        var g = st.groups[groupName];
+        if (!g) return null;
+
+        var mechId = mechanismIdForGroup(groupName);
+        var mech = ensureMechanismData(mechId);
+        var mode = (parseInt(g.required, 10) === 0) ? "all" : "kofn";
+
+        mech.kind = "group";
+        mech.legacyId = groupName;
+        mech.sourceKind = "pressurePlate";
+        mech.name = groupName;
+        mech.pageId = inferMechanismPageId(g.plates || []);
+        mech.sources = (g.plates || []).slice();
+        mech.rule.mode = mode;
+        mech.rule.k = clampRequired(g);
+        mech.rule.timing = "press";
+        mech.effects.doors = cloneDoorModes(g.doors);
+        mech.effects.trap = null;
+        mech.messages.on = g.msgOn || "";
+        mech.messages.off = g.msgOff || "";
+        mech.locks.mechanismLocked = !!g.locked;
+        mech.locks.freezeWhenLocked = !!g.lockFreeze;
+        mech.locks.configLocked = !!g.cfgLocked;
+        mech.locks.autoLock = !!g.autoLock;
+        mech.locks.hasTriggered = !!g.hasTriggered;
+        mech.runtime.lastActive = !!g.lastActive;
+        mech.runtime.lastOccupants = [];
+
+        return mech;
+    }
+
+    function syncAllMechanisms() {
+        var st = ensureState();
+        var keep = {};
+        var mechId;
+        var gname;
+        var pid;
+
+        for (pid in st.plates) {
+            if (!st.plates.hasOwnProperty(pid)) continue;
+            mechId = mechanismIdForPlate(pid);
+            syncMechanismFromPlate(pid);
+            keep[mechId] = true;
+        }
+
+        for (gname in st.groups) {
+            if (!st.groups.hasOwnProperty(gname)) continue;
+            mechId = mechanismIdForGroup(gname);
+            syncMechanismFromGroup(gname);
+            keep[mechId] = true;
+        }
+
+        for (mechId in st.mechanisms) {
+            if (!st.mechanisms.hasOwnProperty(mechId)) continue;
+            if (!keep[mechId]) delete st.mechanisms[mechId];
+        }
     }
 
     /* ---------- utils ---------- */
@@ -536,7 +696,7 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
     }
 
     function firePlateTrap(plate, pdata, targets) {
-        if (!mech || !pdata) return;
+        if (!plate || !pdata) return;
 
         var trap = backfillTrapConfig(pdata.trap);
         if (!trap.enabled || trap.type === "none") return;
@@ -606,44 +766,128 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
     }
 
     /* ---------- evaluation: single plate ---------- */
-    function evaluatePlate(plateId) {
-        var plate = getObj("graphic", plateId);
+    function countActiveMechanismSources(mech) {
+        var count = 0;
+        for (var i = 0; i < mech.sources.length; i++) {
+            var source = getObj("graphic", mech.sources[i]);
+            if (!source) continue;
+            if (isPlateOccupied(source)) count++;
+        }
+        return count;
+    }
+
+    function applyDoorEffects(doors, active) {
+        for (var doorId in doors) {
+            if (!doors.hasOwnProperty(doorId)) continue;
+            if (active) applyOccupied(getObj("door", doorId), doors[doorId]);
+            else applyUnoccupied(getObj("door", doorId), doors[doorId]);
+        }
+    }
+
+    function syncLegacyFromMechanism(mech) {
+        var st = ensureState();
+        if (mech.kind === "single") {
+            var pdata = ensurePlateData(mech.legacyId);
+            pdata.doors = cloneDoorModes(mech.effects.doors);
+            pdata.msgOn = mech.messages.on;
+            pdata.msgOff = mech.messages.off;
+            pdata.lastActive = !!mech.runtime.lastActive;
+            pdata.lastOccupants = (mech.runtime.lastOccupants || []).slice();
+            pdata.trap = mech.effects.trap;
+            return;
+        }
+
+        var g = st.groups[mech.legacyId];
+        if (!g) return;
+        g.plates = mech.sources.slice();
+        g.doors = cloneDoorModes(mech.effects.doors);
+        g.required = (mech.rule.mode === "all") ? 0 : mech.rule.k;
+        g.msgOn = mech.messages.on;
+        g.msgOff = mech.messages.off;
+        g.locked = !!mech.locks.mechanismLocked;
+        g.lockFreeze = !!mech.locks.freezeWhenLocked;
+        g.cfgLocked = !!mech.locks.configLocked;
+        g.autoLock = !!mech.locks.autoLock;
+        g.hasTriggered = !!mech.locks.hasTriggered;
+        g.lastActive = !!mech.runtime.lastActive;
+    }
+
+    function evaluateMechanism(mech) {
         if (!mech) return;
 
-        var pdata = ensurePlateData(plateId);
-        if (!pdata || !pdata.doors) return;
+        if (mech.kind === "single") {
+            var plate = getObj("graphic", mech.sources[0]);
+            if (!plate) return;
 
-        var occupants = plateOccupants(plate);
-        var prevOccupants = getGraphicsByIds(pdata.lastOccupants);
-        var wasActive = !!pdata.lastActive;
-        var occ = isPlateOccupied(plate);
+            var pdata = ensurePlateData(mech.legacyId);
+            var occupants = plateOccupants(plate);
+            var prevOccupants = getGraphicsByIds(mech.runtime.lastOccupants);
+            var wasActive = !!mech.runtime.lastActive;
+            var occ = occupants.length > 0;
 
-        // edge-triggered messages
-        if (occ && !wasActive) postTriggerMessage(pdata.msgOn);
-        if (!occ && wasActive) postTriggerMessage(pdata.msgOff);
+            if (occ && !wasActive) postTriggerMessage(mech.messages.on);
+            if (!occ && wasActive) postTriggerMessage(mech.messages.off);
 
-        for (var doorId in pdata.doors) {
-            if (!pdata.doors.hasOwnProperty(doorId)) continue;
-            var mode = pdata.doors[doorId];
-            var d = getObj("door", doorId);
-            if (occ) applyOccupied(d, mode);
-            else applyUnoccupied(d, mode);
+            applyDoorEffects(mech.effects.doors, occ);
+
+            if (!occ && wasActive && pdata.trap.type === "status" && pdata.trap.status.clearOnRelease && mech.rule.timing === "press") {
+                var clearMarkers = parseMarkerList(pdata.trap.status.markers);
+                var clearTargets = getGraphicsByIds(pdata.trap.status.lastTargets);
+                for (var i = 0; i < clearTargets.length; i++) removeMarkersFromToken(clearTargets[i], clearMarkers);
+                pdata.trap.status.lastTargets = [];
+            }
+
+            if (mech.effects.trap && trapFiresOnEdge(mech.rule.timing, wasActive, occ)) {
+                firePlateTrap(plate, { trap: mech.effects.trap }, occ ? occupants : prevOccupants);
+            }
+
+            mech.runtime.lastActive = occ;
+            mech.runtime.lastOccupants = [];
+            for (i = 0; i < occupants.length; i++) mech.runtime.lastOccupants.push(occupants[i].id);
+            syncLegacyFromMechanism(mech);
+            return;
         }
 
-        if (!occ && wasActive && pdata.trap.type === "status" && pdata.trap.status.clearOnRelease && pdata.trap.trigger === "press") {
-            var clearMarkers = parseMarkerList(pdata.trap.status.markers);
-            var clearTargets = getGraphicsByIds(pdata.trap.status.lastTargets);
-            for (var i = 0; i < clearTargets.length; i++) removeMarkersFromToken(clearTargets[i], clearMarkers);
-            pdata.trap.status.lastTargets = [];
+        pruneGroup({
+            plates: mech.sources,
+            doors: mech.effects.doors
+        });
+
+        mech.pageId = inferMechanismPageId(mech.sources);
+
+        if (mech.locks.mechanismLocked) {
+            mech.runtime.lastActive = false;
+            if (!mech.locks.freezeWhenLocked) applyDoorEffects(mech.effects.doors, false);
+            syncLegacyFromMechanism(mech);
+            return;
         }
 
-        if (trapFiresOnEdge(pdata.trap.trigger, wasActive, occ)) {
-            firePlateTrap(plate, pdata, occ ? occupants : prevOccupants);
+        var pressed = countActiveMechanismSources(mech);
+        var required = mech.rule.mode === "all" ? mech.sources.length : mech.rule.k;
+        if (required < 1) required = mech.sources.length;
+        var active = mech.sources.length > 0 && pressed >= required;
+
+        if (active && !mech.runtime.lastActive) postTriggerMessage(mech.messages.on);
+        if (!active && mech.runtime.lastActive) postTriggerMessage(mech.messages.off);
+        mech.runtime.lastActive = active;
+
+        if (active && !mech.locks.hasTriggered) {
+            mech.locks.hasTriggered = true;
+            applyDoorEffects(mech.effects.doors, true);
+            if (mech.locks.autoLock) {
+                mech.locks.mechanismLocked = true;
+                mech.locks.freezeWhenLocked = true;
+            }
+            syncLegacyFromMechanism(mech);
+            return;
         }
 
-        pdata.lastActive = occ;
-        pdata.lastOccupants = [];
-        for (var j = 0; j < occupants.length; j++) pdata.lastOccupants.push(occupants[j].id);
+        applyDoorEffects(mech.effects.doors, active);
+        syncLegacyFromMechanism(mech);
+    }
+
+    function evaluatePlate(plateId) {
+        evaluateMechanism(syncMechanismFromPlate(plateId));
     }
 
     /* ---------- evaluation: groups ---------- */
@@ -669,7 +913,7 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         for (var i = 0; i < group.plates.length; i++) {
             var pid = group.plates[i];
             var plate = getObj("graphic", pid);
-            if (!mech) continue;
+            if (!plate) continue;
             if (isPlateOccupied(plate)) count++;
         }
         return count;
@@ -685,72 +929,16 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
     }
 
     function evaluateGroup(groupName) {
-        var st = ensureState();
-        var g = st.groups[groupName];
-        if (!g) return;
-
-        pruneGroup(g);
-
-        // trigger-locked:
-        // - if lockFreeze: do nothing (freeze state)
-        // - else: force revert to inactive state
-        if (g.locked) {
-            g.lastActive = false; // so it can re-announce on next legit activation
-            if (g.lockFreeze) return;
-
-            for (var doorId in g.doors) {
-                if (!g.doors.hasOwnProperty(doorId)) continue;
-                applyUnoccupied(getObj("door", doorId), g.doors[doorId]);
-            }
-            return;
-        }
-
-        var pressed = groupPressedCount(g);
-        var required = clampRequired(g);
-        var active = (pressed >= required);
-
-        // edge-triggered messages
-        if (active && !g.lastActive) postTriggerMessage(g.msgOn);
-        if (!active && g.lastActive) postTriggerMessage(g.msgOff);
-        g.lastActive = active;
-
-        // Auto-lock after first trigger: on first activation, apply active state,
-        // then lock+freeze if autoLock is enabled.
-        if (active && !g.hasTriggered) {
-            g.hasTriggered = true;
-
-            for (var didA in g.doors) {
-                if (!g.doors.hasOwnProperty(didA)) continue;
-                applyOccupied(getObj("door", didA), g.doors[didA]);
-            }
-
-            if (g.autoLock) {
-                g.locked = true;
-                g.lockFreeze = true;
-            }
-            return;
-        }
-
-        // normal behavior
-        for (var did in g.doors) {
-            if (!g.doors.hasOwnProperty(did)) continue;
-            var mode = g.doors[did];
-            var d = getObj("door", did);
-            if (active) applyOccupied(d, mode);
-            else applyUnoccupied(d, mode);
-        }
+        evaluateMechanism(syncMechanismFromGroup(groupName));
     }
 
     function evaluateAll() {
         var st = ensureState();
+        syncAllMechanisms();
 
-        for (var plateId in st.plates) {
-            if (!st.plates.hasOwnProperty(plateId)) continue;
-            evaluatePlate(plateId);
-        }
-        for (var gname in st.groups) {
-            if (!st.groups.hasOwnProperty(gname)) continue;
-            evaluateGroup(gname);
+        for (var mechId in st.mechanisms) {
+            if (!st.mechanisms.hasOwnProperty(mechId)) continue;
+            evaluateMechanism(st.mechanisms[mechId]);
         }
     }
 
@@ -993,7 +1181,7 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
             if (o.get("_type") === "door") doors.push(o);
         }
 
-        if (!mech) { whisper("Select a plate token (GM layer) and one or more Door objects."); return; }
+        if (!plate) { whisper("Select a plate token (GM layer) and one or more Door objects."); return; }
         if (!doors.length) { whisper("No Door objects selected (must be Door tool doors)."); return; }
 
         ensurePlateData(plate.id);
@@ -1274,7 +1462,7 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
 
     function renderTrapUI(playerid, plateId) {
         var plate = getObj("graphic", plateId);
-        if (!mech) return whisper("Trigger not found.");
+        if (!plate) return whisper("Trigger not found.");
 
         var pdata = ensurePlateData(plateId);
         var trap = pdata.trap;
@@ -1618,12 +1806,87 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         whisper("Group <b>" + esc(name) + "</b> release message set.");
     }
 
+    function mechanismDisplayName(mech) {
+        return mech.name || ("Mechanism …" + shortId(mech.id));
+    }
+
+    function mechanismVisibleOnPage(mech, pageId) {
+        if (!mech) return false;
+        if (mech.pageId && mech.pageId === pageId) return true;
+
+        for (var i = 0; i < mech.sources.length; i++) {
+            var source = getObj("graphic", mech.sources[i]);
+            if (source && source.get("_pageid") === pageId) return true;
+        }
+        return false;
+    }
+
+    function mechanismRequiredCount(mech) {
+        if (!mech) return 0;
+        if (mech.rule.mode === "all") return mech.sources.length;
+        if (mech.rule.mode === "single") return 1;
+        return mech.rule.k;
+    }
+
+    function mechanismIsActive(mech) {
+        if (!mech) return false;
+        if (mech.kind === "single") {
+            var plate = getObj("graphic", mech.sources[0]);
+            return !!plate && isPlateOccupied(plate);
+        }
+        if (mech.locks.mechanismLocked) return false;
+        var required = mechanismRequiredCount(mech);
+        return mech.sources.length > 0 && countActiveMechanismSources(mech) >= required;
+    }
+
+    function mechanismRuleSummary(mech) {
+        if (!mech) return "";
+        if (mech.kind === "single") {
+            var timing = mech.effects.trap ? trapTriggerLabel(mech.rule.timing) : "Occupancy";
+            return "1 source / " + timing;
+        }
+
+        var required = mechanismRequiredCount(mech);
+        return required + " of " + mech.sources.length + " / " + trapTriggerLabel(mech.rule.timing);
+    }
+
+    function mechanismEffectSummary(mech) {
+        var parts = [];
+        var doorCount = Object.keys(mech.effects.doors || {}).length;
+        var trap = mech.effects.trap;
+        var trapEnabled = trap && trap.enabled && trap.type !== "none";
+
+        if (doorCount) parts.push(doorCount + " door" + (doorCount === 1 ? "" : "s"));
+        if (trapEnabled) parts.push(trapTypeLabel(trap.type));
+
+        return parts.length ? parts.join(" + ") : "(no effects)";
+    }
+
+    function sortMechanismsForUi(a, b) {
+        if (a.kind !== b.kind) return a.kind === "single" ? -1 : 1;
+        var an = mechanismDisplayName(a).toLowerCase();
+        var bn = mechanismDisplayName(b).toLowerCase();
+        if (an < bn) return -1;
+        if (an > bn) return 1;
+        return 0;
+    }
+
     /* ---------- UI rendering ---------- */
     function renderUI(playerid) {
         var st = ensureState();
         var pageId = getUIPage(playerid);
         var pageName = getUIPageName(pageId);
         var suggested = safeGroupNameFromPage(pageName);
+        var mechs = [];
+        var mechId;
+
+        syncAllMechanisms();
+        for (mechId in st.mechanisms) {
+            if (!st.mechanisms.hasOwnProperty(mechId)) continue;
+            if (!mechanismVisibleOnPage(st.mechanisms[mechId], pageId)) continue;
+            mechs.push(st.mechanisms[mechId]);
+        }
+        mechs.sort(sortMechanismsForUi);
 
         var html = "";
         html += '<div style="border:2px solid #111;border-radius:12px;overflow:hidden;max-width:860px;font-family:Arial,sans-serif;">';
@@ -1657,249 +1920,157 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         html += mini("Add selected doors SECRET", "!mech groupadddoors ?{Group Name (no spaces)|" + esc(suggested) + "} secret", "Bind selected door(s) to group as SECRET");
         html += "</div>";
 
-        /* ---------- singles ---------- */
         html += '<div style="border:2px solid #111;border-radius:10px;margin-bottom:12px;">';
         html += '<div style="padding:8px 10px;border-bottom:2px solid #111;background:#f3f4f6;">';
-        html += '<span style="font-weight:900;font-size:18px;">Single-Source Mechanisms</span>';
-        html += '<span style="color:#444;font-weight:900;margin-left:10px;">(1 trigger → doors/effects)</span>';
+        html += '<span style="font-weight:900;font-size:18px;">Mechanisms</span>';
+        html += '<span style="color:#444;font-weight:900;margin-left:10px;">(single-source and multi-source)</span>';
         html += "</div>";
 
-        var anySingle = false;
+        if (!mechs.length) {
+            html += '<div style="padding:10px;color:#666;font-weight:900;">(No mechanisms on this page)</div>';
+        }
 
-        for (var pid in st.plates) {
-            if (!st.plates.hasOwnProperty(pid)) continue;
-            var pObj = getObj("graphic", pid);
-            if (!pObj || pObj.get("_pageid") !== pageId) continue;
-
-            anySingle = true;
-
-            var occ = isPlateOccupied(pObj);
-            var name = pObj.get("name") || ("Plate …" + shortId(pid));
-            var pdata = ensurePlateData(pid);
-            var doors = pdata.doors || {};
-            var trap = pdata.trap || defaultTrapConfig();
+        for (var m = 0; m < mechs.length; m++) {
+            var mech = mechs[m];
+            var active = mechanismIsActive(mech);
+            var required = mechanismRequiredCount(mech);
+            var pressed = countActiveMechanismSources(mech);
+            var trap = mech.effects.trap || defaultTrapConfig();
             var trapEnabled = trap.enabled && trap.type !== "none";
+            var lockIcon = mech.locks.mechanismLocked ? "🔒" : "🔓";
+            var cfgIcon = mech.locks.configLocked ? "🧱" : "✏️";
+            var autoIcon = mech.locks.autoLock ? "⭐" : "☆";
+            var overrideActive = mech.kind === "group" && hasEditOverride(mech.legacyId);
+            var editBlocked = mech.kind === "group" && mech.locks.configLocked && !overrideActive;
+            var lockText = mech.locks.mechanismLocked ? (mech.locks.freezeWhenLocked ? "FROZEN" : "LOCKED") : "UNLOCKED";
 
+            var name = mechanismDisplayName(mech);
             html += '<div style="border-top:2px solid #111;">';
             html += '<div style="padding:8px 10px;border-bottom:2px solid #111;">';
             html += '<span style="font-weight:900;font-size:18px;">' + esc(name) + "</span>" +
-                badge(occ ? "OCCUPIED" : "CLEAR", occ);
+                badge(active ? "ACTIVE" : "INACTIVE", active);
+            html += badge(mech.kind === "single" ? "SINGLE" : "MULTI", false);
             if (trapEnabled) html += badge("TRAP", false);
-            html += "</div>";
-
-            html += '<div style="padding:8px 10px;">';
-            html += iconBtn("🔍", "!mech ping " + pid, "Ping trigger");
-            html += iconBtn("✅", "!mech checkplate " + pid, "Check mechanism");
-            html += iconBtn("⬆️", "!mech simopen " + pid, "Force open (simulate triggered)");
-            html += iconBtn("⬇️", "!mech simclose " + pid, "Force close (simulate released)");
-            html += iconBtn("🗑️", "!mech removeplate " + pid, "Remove trigger");
-            html += iconBtn("🔗", "!mech add lock", "Bind selected Door(s) to the selected trigger as LOCK");
-            html += iconBtn("👁️", "!mech add secret", "Bind selected Door(s) to the selected trigger as SECRET");
-            html += iconBtn("💣", "!mech trapui " + pid, trapEnabled ? "Open mechanism configuration" : "Add trap/effects to this trigger");
-            // messages
-            html += iconBtn("📣", "!mech platemsgon " + pid + " ?{Trigger message (plate pressed)|}", "Set trigger message (plate pressed)");
-            html += iconBtn("🔕", "!mech platemsgoff " + pid + " ?{Release message (plate released)|}", "Set release message (plate released)");
-
-            if (String(pdata.msgOn || "").trim()) {
-                html += '<div style="margin-top:6px;color:#111;font-weight:900;">On: <span style="font-weight:700;">' + esc(pdata.msgOn) + "</span></div>";
-            }
-            if (String(pdata.msgOff || "").trim()) {
-                html += '<div style="margin-top:4px;color:#111;font-weight:900;">Off: <span style="font-weight:700;">' + esc(pdata.msgOff) + "</span></div>";
-            }
-
-            var linked = [];
-            var hasDoors = false;
-            for (var did in doors) {
-                if (!doors.hasOwnProperty(did)) continue;
-                hasDoors = true;
-                linked.push("…" + shortId(did));
-            }
-
-            html += '<div style="margin-top:6px;font-weight:900;">doors: <span style="font-weight:900;color:#333;">' +
-                (hasDoors ? esc(linked.join(", ")) : "(none)") + "</span></div>";
-
-            html += '<div style="margin-top:6px;font-weight:900;">effects: <span style="font-weight:900;color:#333;">' +
-                esc(trapEnabled ? (trapTypeLabel(trap.type) + " / " + trapTriggerLabel(trap.trigger)) : "(disabled)") + "</span></div>";
-
-            for (var did2 in doors) {
-                if (!doors.hasOwnProperty(did2)) continue;
-                var dd = getObj("door", did2);
-                if (!dd) continue;
-                html += '<div style="margin-left:12px;margin-top:4px;color:#111;font-weight:900;">' +
-                    esc(String(doors[did2]).toUpperCase()) + " door …" + esc(shortId(did2)) +
-                    ' <span style="color:#666;">(' + esc(doorBits(dd)) + ")</span></div>";
-            }
-
-            html += "</div></div>";
-        }
-
-        if (!anySingle) {
-            html += '<div style="padding:10px;color:#666;font-weight:900;">(No single-source mechanisms on this page)</div>';
-        }
-
-        html += "</div>";
-
-        /* ---------- groups ---------- */
-        html += '<div style="border:2px solid #111;border-radius:10px;">';
-        html += '<div style="padding:8px 10px;border-bottom:2px solid #111;background:#f3f4f6;">';
-        html += '<span style="font-weight:900;font-size:18px;">Multi-Source Mechanisms</span>';
-        html += '<span style="color:#444;font-weight:900;margin-left:10px;">(K-of-N triggers → doors/effects)</span>';
-        html += "</div>";
-
-        var anyGroup = false;
-
-        for (var gname in st.groups) {
-            if (!st.groups.hasOwnProperty(gname)) continue;
-            var g = st.groups[gname];
-
-            // show only if any trigger in group is on this page
-            var show = false;
-            for (var j = 0; j < g.plates.length; j++) {
-                var gp = getObj("graphic", g.plates[j]);
-                if (gp && gp.get("_pageid") === pageId) { show = true; break; }
-            }
-            if (!show) continue;
-
-            anyGroup = true;
-
-            pruneGroup(g);
-
-            var pressed = groupPressedCount(g);
-            var required = clampRequired(g);
-            var active = (!g.locked) && (pressed >= required);
-
-            var lockIcon = g.locked ? "🔒" : "🔓";
-            var cfgIcon = g.cfgLocked ? "🧱" : "✏️";
-            var autoIcon = g.autoLock ? "⭐" : "☆";
-
-            var overrideActive = hasEditOverride(gname);
-            var editBlocked = g.cfgLocked && !overrideActive;
-            var lockText = g.locked ? (g.lockFreeze ? "FROZEN" : "LOCKED") : "UNLOCKED";
-
-            html += '<div style="border-top:2px solid #111;">';
-            html += '<div style="padding:8px 10px;border-bottom:2px solid #111;">';
-            html += '<span style="font-weight:900;font-size:18px;">' + esc(gname) + "</span>";
-            html += badge(active ? "ACTIVE" : "INACTIVE", active);
-            if (g.locked) html += badge(lockText, false);
-            if (g.cfgLocked) html += badge("CONFIG", false);
+            if (mech.kind === "group" && mech.locks.mechanismLocked) html += badge(lockText, false);
+            if (mech.kind === "group" && mech.locks.configLocked) html += badge("CONFIG", false);
             if (overrideActive) html += badge("OVERRIDE", true);
-            if (g.autoLock) html += badge("AUTOLOCK", true);
-            html += '<span style="color:#444;font-weight:900;margin-left:8px;">(' + esc(String(pressed)) + "/" + esc(String(required)) + " pressed)</span>";
+            if (mech.kind === "group" && mech.locks.autoLock) html += badge("AUTOLOCK", true);
             html += "</div>";
 
             html += '<div style="padding:8px 10px;">';
-
-            // always-available controls
-            html += iconBtn(lockIcon, "!mech grouplock " + gname, g.locked ? "Unlock mechanism" : "Lock mechanism (disable)");
-            html += iconBtn("✅", "!mech groupcheck " + gname, "Check group now");
-            html += iconBtn(cfgIcon, "!mech groupcfglock " + gname, g.cfgLocked ? "Unlock config (allow edits)" : "Lock config (prevent edits)");
-
-            if (g.cfgLocked) html += iconBtn("⚡", "!mech groupoverride " + gname, "Override config lock for 60s");
-            else html += iconBtnDisabled("⚡", "Override only needed when config locked");
-
-            // auto-lock toggle
-            if (editBlocked) html += iconBtnDisabled(autoIcon, "Config locked (use Override to change auto-lock)");
-            else html += iconBtn(autoIcon, "!mech groupautolock " + gname, g.autoLock ? "Auto-lock after first trigger: ON (click to disable)" : "Auto-lock after first trigger: OFF (click to enable)");
-
-            // reset trigger
-            if (editBlocked) html += iconBtnDisabled("🔁", "Config locked (use Override to reset trigger)");
-            else html += iconBtn("🔁", "!mech groupreset " + gname, "Reset hasTriggered (and unfreeze if auto-locked)");
-
-            // edit controls
-            if (editBlocked) {
-                html += iconBtnDisabled("➕", "Config locked");
-                html += iconBtnDisabled("🔗", "Config locked");
-                html += iconBtnDisabled("👁️", "Config locked");
-                html += iconBtnDisabled("🗑️", "Config locked");
+            if (mech.kind === "single") {
+                var plateId = mech.legacyId;
+                html += iconBtn("🔍", "!mech ping " + plateId, "Ping trigger");
+                html += iconBtn("✅", "!mech checkplate " + plateId, "Check mechanism");
+                html += iconBtn("⬆️", "!mech simopen " + plateId, "Force open (simulate triggered)");
+                html += iconBtn("⬇️", "!mech simclose " + plateId, "Force close (simulate released)");
+                html += iconBtn("🗑️", "!mech removeplate " + plateId, "Remove trigger");
+                html += iconBtn("🔗", "!mech add lock", "Bind selected Door(s) to the selected trigger as LOCK");
+                html += iconBtn("👁️", "!mech add secret", "Bind selected Door(s) to the selected trigger as SECRET");
+                html += iconBtn("💣", "!mech trapui " + plateId, trapEnabled ? "Open mechanism configuration" : "Add trap/effects to this trigger");
+                html += iconBtn("📣", "!mech platemsgon " + plateId + " ?{Trigger message (plate pressed)|}", "Set trigger message (press)");
+                html += iconBtn("🔕", "!mech platemsgoff " + plateId + " ?{Release message (plate released)|}", "Set release message (release)");
             } else {
-                html += iconBtn("➕", "!mech groupaddplates " + gname, "Add selected triggers to this mechanism");
-                html += iconBtn("🔗", "!mech groupadddoors " + gname + " lock", "Add selected doors as LOCK");
-                html += iconBtn("👁️", "!mech groupadddoors " + gname + " secret", "Add selected doors as SECRET");
-                html += iconBtn("🗑️", "!mech groupremove " + gname, "Remove group");
+                var gname = mech.legacyId;
+                html += iconBtn(lockIcon, "!mech grouplock " + gname, mech.locks.mechanismLocked ? "Unlock mechanism" : "Lock mechanism (disable)");
+                html += iconBtn("✅", "!mech groupcheck " + gname, "Check mechanism");
+                html += iconBtn(cfgIcon, "!mech groupcfglock " + gname, mech.locks.configLocked ? "Unlock config (allow edits)" : "Lock config (prevent edits)");
+                if (mech.locks.configLocked) html += iconBtn("⚡", "!mech groupoverride " + gname, "Override config lock for 60s");
+                else html += iconBtnDisabled("⚡", "Override only needed when config locked");
+                if (editBlocked) html += iconBtnDisabled(autoIcon, "Config locked (use Override to change auto-lock)");
+                else html += iconBtn(autoIcon, "!mech groupautolock " + gname, mech.locks.autoLock ? "Auto-lock after first trigger: ON (click to disable)" : "Auto-lock after first trigger: OFF (click to enable)");
+                if (editBlocked) html += iconBtnDisabled("🔁", "Config locked (use Override to reset trigger)");
+                else html += iconBtn("🔁", "!mech groupreset " + gname, "Reset hasTriggered (and unfreeze if auto-locked)");
+                if (editBlocked) {
+                    html += iconBtnDisabled("➕", "Config locked");
+                    html += iconBtnDisabled("🔗", "Config locked");
+                    html += iconBtnDisabled("👁️", "Config locked");
+                    html += iconBtnDisabled("🗑️", "Config locked");
+                    html += iconBtnDisabled("📣", "Config locked");
+                    html += iconBtnDisabled("🔕", "Config locked");
+                } else {
+                    html += iconBtn("➕", "!mech groupaddplates " + gname, "Add selected triggers to this mechanism");
+                    html += iconBtn("🔗", "!mech groupadddoors " + gname + " lock", "Add selected doors as LOCK");
+                    html += iconBtn("👁️", "!mech groupadddoors " + gname + " secret", "Add selected doors as SECRET");
+                    html += iconBtn("🗑️", "!mech groupremove " + gname, "Remove mechanism");
+                    html += iconBtn("📣", "!mech groupmsgon " + gname + " ?{Trigger message (group active)|}", "Set trigger message");
+                    html += iconBtn("🔕", "!mech groupmsgoff " + gname + " ?{Release message (group inactive)|}", "Set release message");
+                }
             }
 
-            // group messages (edit-gated)
-            if (editBlocked) {
-                html += iconBtnDisabled("📣", "Config locked");
-                html += iconBtnDisabled("🔕", "Config locked");
-            } else {
-                html += iconBtn("📣", "!mech groupmsgon " + gname + " ?{Trigger message (group active)|}", "Set trigger message (group active)");
-                html += iconBtn("🔕", "!mech groupmsgoff " + gname + " ?{Release message (group inactive)|}", "Set release message (group inactive)");
+            html += '<div style="margin-top:6px;font-weight:900;">rule: <span style="font-weight:900;color:#333;">' + esc(mechanismRuleSummary(mech)) + "</span></div>";
+            html += '<div style="margin-top:6px;font-weight:900;">effects: <span style="font-weight:900;color:#333;">' + esc(mechanismEffectSummary(mech)) + "</span></div>";
+
+            if (mech.kind === "group") {
+                html += '<div style="margin-top:6px;font-weight:900;">status: <span style="font-weight:900;color:#333;">' + esc(String(pressed)) + "/" + esc(String(required)) + " pressed</span></div>";
             }
 
-            if (String(g.msgOn || "").trim()) {
-                html += '<div style="margin-top:6px;color:#111;font-weight:900;">On: <span style="font-weight:700;">' + esc(g.msgOn) + "</span></div>";
+            if (String(mech.messages.on || "").trim()) {
+                html += '<div style="margin-top:6px;color:#111;font-weight:900;">On: <span style="font-weight:700;">' + esc(mech.messages.on) + "</span></div>";
             }
-            if (String(g.msgOff || "").trim()) {
-                html += '<div style="margin-top:4px;color:#111;font-weight:900;">Off: <span style="font-weight:700;">' + esc(g.msgOff) + "</span></div>";
-            }
-
-            // requirement controls
-            html += "<div style='margin-top:6px;'></div>";
-            if (editBlocked) {
-                html += miniDisabled("Require ALL", "Config locked");
-                html += miniDisabled("Set K…", "Config locked");
-            } else {
-                html += mini("Require ALL", "!mech groupsetall " + gname, "Require ALL plates in group");
-                html += mini("Set K…", "!mech groupsetk " + gname + " ?{Require how many plates?|2}", "Set required K (K-of-N)");
+            if (String(mech.messages.off || "").trim()) {
+                html += '<div style="margin-top:4px;color:#111;font-weight:900;">Off: <span style="font-weight:700;">' + esc(mech.messages.off) + "</span></div>";
             }
 
-            // plates list
-            html += '<div style="margin-top:10px;font-weight:900;">Triggers (this page)</div>';
-            var anyPlateListed = false;
-            for (var k = 0; k < g.plates.length; k++) {
-                var pp = getObj("graphic", g.plates[k]);
-                if (!pp) continue;
-                if (pp.get("_pageid") !== pageId) continue;
+            if (mech.kind === "group") {
+                html += "<div style='margin-top:6px;'></div>";
+                if (editBlocked) {
+                    html += miniDisabled("Require ALL", "Config locked");
+                    html += miniDisabled("Set K…", "Config locked");
+                } else {
+                    html += mini("Require ALL", "!mech groupsetall " + mech.legacyId, "Require all sources");
+                    html += mini("Set K…", "!mech groupsetk " + mech.legacyId + " ?{Require how many plates?|2}", "Set required K (K-of-N)");
+                }
+            }
 
-                anyPlateListed = true;
-
-                var pocc = isPlateOccupied(pp);
-                var pname = pp.get("name") || ("Plate …" + shortId(pp.id));
-
+            html += '<div style="margin-top:10px;font-weight:900;">Sources</div>';
+            var anySourceListed = false;
+            for (var s = 0; s < mech.sources.length; s++) {
+                var src = getObj("graphic", mech.sources[s]);
+                if (!src || src.get("_pageid") !== pageId) continue;
+                anySourceListed = true;
+                var srcOcc = isPlateOccupied(src);
+                var srcName = src.get("name") || ("Trigger …" + shortId(src.id));
                 html += '<div style="margin-left:12px;margin-top:6px;font-weight:900;">' +
-                    esc(pname) + badge(pocc ? "DOWN" : "UP", pocc) +
-                    mini("Ping", "!mech ping " + pp.id, "Ping this trigger");
-
-                if (editBlocked) html += miniDisabled("Remove", "Config locked");
-                else html += mini("Remove", "!mech groupdelplate " + gname + " " + pp.id, "Remove this trigger from the mechanism");
-
+                    esc(srcName) + badge(srcOcc ? "DOWN" : "UP", srcOcc) +
+                    mini("Ping", "!mech ping " + src.id, "Ping this trigger");
+                if (mech.kind === "group") {
+                    if (editBlocked) html += miniDisabled("Remove", "Config locked");
+                    else html += mini("Remove", "!mech groupdelplate " + mech.legacyId + " " + src.id, "Remove this trigger from the mechanism");
+                }
                 html += "</div>";
             }
-            if (!anyPlateListed) {
-                html += '<div style="margin-left:12px;margin-top:6px;color:#666;font-weight:900;">(No triggers from this mechanism on this page)</div>';
+            if (!anySourceListed) {
+                html += '<div style="margin-left:12px;margin-top:6px;color:#666;font-weight:900;">(No sources on this page)</div>';
             }
 
-            // doors list
             html += '<div style="margin-top:12px;font-weight:900;">Doors</div>';
-            var hasGDoors = false;
-            for (var did3 in g.doors) {
-                if (!g.doors.hasOwnProperty(did3)) continue;
-                hasGDoors = true;
+            var hasDoors = false;
+            for (var did3 in mech.effects.doors) {
+                if (!mech.effects.doors.hasOwnProperty(did3)) continue;
+                hasDoors = true;
                 var d3 = getObj("door", did3);
                 if (!d3) continue;
 
                 html += '<div style="margin-left:12px;margin-top:6px;font-weight:900;">' +
-                    esc(String(g.doors[did3]).toUpperCase()) + " door …" + esc(shortId(did3)) +
+                    esc(String(mech.effects.doors[did3]).toUpperCase()) + " door …" + esc(shortId(did3)) +
                     ' <span style="color:#666;">(' + esc(doorBits(d3)) + ")</span> ";
 
-                if (editBlocked) html += miniDisabled("Detach", "Config locked");
-                else html += mini("Detach", "!mech groupdeldor " + gname + " " + did3, "Detach this door from group");
+                if (mech.kind === "group") {
+                    if (editBlocked) html += miniDisabled("Detach", "Config locked");
+                    else html += mini("Detach", "!mech groupdeldor " + mech.legacyId + " " + did3, "Detach this door from group");
+                }
 
                 html += "</div>";
             }
-            if (!hasGDoors) {
+            if (!hasDoors) {
                 html += '<div style="margin-left:12px;margin-top:6px;color:#666;font-weight:900;">(No doors bound)</div>';
             }
 
             html += "</div></div>";
         }
 
-        if (!anyGroup) {
-            html += '<div style="padding:10px;color:#666;font-weight:900;">(No multi-source mechanisms on this page)</div>';
-        }
-
-        html += "</div>"; // groups card
+        html += "</div>";
         html += "</div></div>"; // body + shell
 
         whisper(html);
