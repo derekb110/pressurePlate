@@ -1374,10 +1374,6 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
             controls + '</div>';
     }
 
-    function indexCell(width, content) {
-        return '<div style="display:inline-block;vertical-align:top;width:' + esc(String(width)) + ';padding-right:8px;box-sizing:border-box;">' + content + '</div>';
-    }
-
     function doorBits(d) {
         var bits = [];
         bits.push(d.get("isOpen") ? "open" : "closed");
@@ -2892,13 +2888,8 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         );
 
         var indexBody = "";
-        indexBody += '<div style="padding:8px 10px;border:2px solid #111;border-radius:10px;background:#f1efe8;font-size:11px;font-weight:900;text-transform:uppercase;letter-spacing:.04em;">';
-        indexBody += indexCell("22%", "Name");
-        indexBody += indexCell("14%", "Trigger");
-        indexBody += indexCell("24%", "Rule");
-        indexBody += indexCell("18%", "Effects");
-        indexBody += indexCell("10%", "State");
-        indexBody += indexCell("12%", "Actions");
+        indexBody += '<div style="padding:8px 10px;border:1px solid #d4d4d8;border-radius:10px;background:#fafaf9;color:#57534e;font-size:11px;font-weight:900;letter-spacing:.04em;text-transform:uppercase;">';
+        indexBody += "Each mechanism is shown as a compact card so the layout stays readable in narrow Roll20 chat windows.";
         indexBody += "</div>";
 
         if (!mechs.length) {
@@ -2927,24 +2918,24 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
             rowActions += mini("Reset", "!mech reset " + mech.legacyId, "Reset runtime");
 
             indexBody += '<div style="margin-top:8px;padding:10px;border:2px solid #111;border-radius:12px;background:#fff;">';
-            indexBody += indexCell("22%",
-                '<div style="font-weight:900;font-size:16px;">' + esc(mechanismDisplayName(mech)) + '</div>' +
-                '<div style="margin-top:4px;">' + badge(mechActive ? "ACTIVE" : "INACTIVE", mechActive) + badge(mech.kind === "single" ? "SINGLE" : "MULTI", false) + '</div>'
-            );
-            indexBody += indexCell("14%",
-                '<div style="font-weight:900;">' + esc(triggerText) + '</div>' +
-                (mech.kind === "single" ? '<div style="margin-top:4px;color:#666;font-weight:900;">' + esc(sourceDisplayName(mech.legacyId, mech.sourceKind, getSourceObject(mech.legacyId, mech.sourceKind))) + '</div>' : '<div style="margin-top:4px;color:#666;font-weight:900;">' + esc(String(mech.sources.length)) + ' sources</div>')
-            );
-            indexBody += indexCell("24%",
-                '<div style="font-weight:900;">' + esc(mechanismRuleSummary(mech)) + '</div>' +
-                (String(mech.messages.on || "").trim() ? '<div style="margin-top:4px;color:#666;font-weight:700;">On: ' + esc(mech.messages.on) + '</div>' : '')
-            );
-            indexBody += indexCell("18%",
-                '<div style="font-weight:900;">' + esc(mechanismEffectSummary(mech)) + '</div>' +
-                ((primary && primary.enabled && primary.type !== "none") ? '<div style="margin-top:4px;color:#666;font-weight:700;">' + esc(primaryEffectTypeLabel(primary.type)) + '</div>' : '<div style="margin-top:4px;color:#666;font-weight:700;">No primary effect</div>')
-            );
-            indexBody += indexCell("10%", '<div style="font-weight:900;">' + esc(stateText) + '</div>');
-            indexBody += indexCell("12%", '<div style="font-weight:900;">' + rowActions + '</div>');
+            indexBody += '<div style="font-weight:900;font-size:18px;line-height:1.2;">' + esc(mechanismDisplayName(mech)) + '</div>';
+            indexBody += '<div style="margin-top:6px;">' + badge(mechActive ? "ACTIVE" : "INACTIVE", mechActive) + badge(mech.kind === "single" ? "SINGLE" : "MULTI", false) + '</div>';
+            indexBody += '<div style="margin-top:10px;">';
+            indexBody += detailStat("Trigger", triggerText);
+            indexBody += detailStat("Source", mech.kind === "single"
+                ? sourceDisplayName(mech.legacyId, mech.sourceKind, getSourceObject(mech.legacyId, mech.sourceKind))
+                : String(mech.sources.length) + " sources");
+            indexBody += detailStat("Rule", mechanismRuleSummary(mech));
+            indexBody += detailStat("Effects", mechanismEffectSummary(mech));
+            indexBody += detailStat("State", stateText);
+            if (primary && primary.enabled && primary.type !== "none") {
+                indexBody += detailStat("Primary", primaryEffectTypeLabel(primary.type));
+            } else if (mech.kind === "single") {
+                indexBody += detailStat("Primary", "No primary effect");
+            }
+            if (String(mech.messages.on || "").trim()) indexBody += detailStat("On Message", mech.messages.on);
+            indexBody += "</div>";
+            indexBody += controlBand("Actions", rowActions);
             indexBody += "</div>";
         }
 
