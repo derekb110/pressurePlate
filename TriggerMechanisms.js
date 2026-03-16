@@ -1348,6 +1348,36 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
             'color:#6b7280;font-size:11px;font-weight:900;margin:0 8px 6px 0;opacity:.75;">' + esc(label) + '</span>';
     }
 
+    function sectionCard(title, body, muted) {
+        return '<div style="border:2px solid #111;border-radius:12px;padding:10px;margin-bottom:10px;background:' + (muted ? "#f7f5ef" : "#fff") + ';box-shadow:0 1px 0 rgba(0,0,0,.08);">' +
+            '<div style="font-weight:900;font-size:15px;letter-spacing:.04em;text-transform:uppercase;margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid #d4d4d8;">' + esc(title) + '</div>' +
+            body + '</div>';
+    }
+
+    function detailStat(label, value) {
+        return '<div style="margin-top:5px;font-weight:900;line-height:1.35;">' +
+            '<span style="display:inline-block;min-width:120px;color:#57534e;">' + esc(label) + ':</span> ' +
+            '<span style="color:#111;font-weight:700;">' + esc(value) + '</span></div>';
+    }
+
+    function statChip(label, value, accent) {
+        return '<div style="display:inline-block;vertical-align:top;min-width:140px;padding:8px 10px;margin:0 8px 8px 0;border-radius:10px;border:1px solid ' +
+            (accent ? "#1d4ed8" : "#d4d4d8") + ';background:' + (accent ? "#eff6ff" : "#fafaf9") + ';">' +
+            '<div style="font-size:10px;font-weight:900;letter-spacing:.05em;text-transform:uppercase;color:' + (accent ? "#1d4ed8" : "#57534e") + ';">' + esc(label) + '</div>' +
+            '<div style="margin-top:2px;font-size:13px;font-weight:900;color:#111;">' + esc(value) + '</div></div>';
+    }
+
+    function controlBand(label, controls) {
+        if (!controls) return "";
+        return '<div style="margin-top:8px;padding:8px 10px;border:1px solid #d4d4d8;border-radius:10px;background:#fafaf9;">' +
+            '<div style="font-size:10px;font-weight:900;letter-spacing:.05em;text-transform:uppercase;color:#57534e;margin-bottom:6px;">' + esc(label) + '</div>' +
+            controls + '</div>';
+    }
+
+    function indexCell(width, content) {
+        return '<div style="display:inline-block;vertical-align:top;width:' + esc(String(width)) + ';padding-right:8px;box-sizing:border-box;">' + content + '</div>';
+    }
+
     function doorBits(d) {
         var bits = [];
         bits.push(d.get("isOpen") ? "open" : "closed");
@@ -2119,14 +2149,9 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         return renderMechanismEditor(playerid, mech.id || mech.legacyId);
     }
 
-    function renderMechanismEditor(playerid, ref) {
-        var mech = (typeof ref === "object") ? ref : resolveMechanismRef(ref);
-        if (!mech) return whisper("Mechanism not found.");
-
-        backfillMechanismData(mech);
-
+    function buildMechanismEditorView(mech) {
         var isSingle = mech.kind === "single";
-        var trap = isSingle ? getPrimaryEffect(mech) : null;
+        var primaryEffect = isSingle ? getPrimaryEffect(mech) : null;
         var sourceId = isSingle ? mech.legacyId : "";
         var sourceObj = isSingle ? getSourceObject(sourceId, mech.sourceKind) : null;
         var singleState = isSingle ? singleMechanismState(mech) : null;
@@ -2135,7 +2160,388 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         var pressed = countActiveMechanismSources(mech);
         var overrideActive = (!isSingle) && hasMechanismEditOverride(mech.legacyId);
         var editBlocked = (!isSingle) && mech.locks.configLocked && !overrideActive;
+        var now = Date.now();
         var cooldownLeft = cooldownRemainingMs(mech);
+        var pendingLeft = Math.max(0, (mech.runtime.pendingUntil || 0) - now);
+
+        return {
+            isSingle: isSingle,
+            primaryEffect: primaryEffect,
+            sourceId: sourceId,
+            sourceObj: sourceObj,
+            singleState: singleState,
+            active: active,
+            required: required,
+            pressed: pressed,
+            overrideActive: overrideActive,
+            editBlocked: editBlocked,
+            cooldownLeft: cooldownLeft,
+            pendingLeft: pendingLeft,
+            ref: isSingle ? sourceId : mech.legacyId
+        };
+    }
+
+    function renderEditorOverview(mech, view) {
+        var body = "";
+        var primaryEffect = view.primaryEffect;
+        var runtimeControls = "";
+        var configControls = "";
+
+        body += badge(view.active ? "ACTIVE" : "INACTIVE", view.active);
+        body += badge(view.isSingle ? "SINGLE" : "MULTI", false);
+        if (view.isSingle) body += badge((primaryEffect.enabled && primaryEffect.type !== "none") ? "PRIMARY EFFECT" : "NO PRIMARY EFFECT", false);
+        if (!view.isSingle && mech.locks.mechanismLocked) body += badge(mech.locks.freezeWhenLocked ? "FROZEN" : "LOCKED", false);
+        if (!view.isSingle && mech.locks.configLocked) body += badge("CONFIG", false);
+        if (view.overrideActive) body += badge("OVERRIDE", true);
+        if (!view.isSingle && mech.locks.autoLock) body += badge("AUTOLOCK", true);
+
+        runtimeControls += mini("Back", "!mech ui", "Back to mechanism list");
+        runtimeControls += mini("Refresh", "!mech edit " + mech.legacyId, "Refresh mechanism configuration");
+        if (view.isSingle) {
+            runtimeControls += mini("Ping", "!mech ping " + view.sourceId, "Ping trigger");
+            runtimeControls += mini("Check", "!mech checkplate " + view.sourceId, "Check mechanism");
+            runtimeControls += mini("Force open", "!mech simopen " + view.sourceId, "Simulate triggered");
+            runtimeControls += mini("Force close", "!mech simclose " + view.sourceId, "Simulate released");
+            runtimeControls += mini("Reset", "!mech reset " + view.sourceId, "Reset mechanism runtime");
+            configControls += mini("Remove", "!mech removeplate " + view.sourceId, "Remove mechanism");
+        } else {
+            runtimeControls += mini("Check", "!mech groupcheck " + mech.legacyId, "Check mechanism");
+            runtimeControls += mini("Reset", "!mech reset " + mech.legacyId, "Reset mechanism runtime");
+            configControls += mini(mech.locks.mechanismLocked ? "Unlock" : "Lock", "!mech grouplock " + mech.legacyId, "Toggle mechanism lock");
+            configControls += mini(mech.locks.configLocked ? "Config unlock" : "Config lock", "!mech groupcfglock " + mech.legacyId, "Toggle config lock");
+            configControls += mini(mech.locks.autoLock ? "Auto-lock off" : "Auto-lock on", "!mech groupautolock " + mech.legacyId, "Toggle auto-lock after first trigger");
+            if (view.editBlocked) configControls += miniDisabled("Remove", "Config locked");
+            else configControls += mini("Remove", "!mech groupremove " + mech.legacyId, "Remove mechanism");
+        }
+        body += '<div style="margin-top:10px;">';
+        body += statChip("Name", mechanismDisplayName(mech), true);
+        body += statChip("Rule", mechanismRuleSummary(mech), false);
+        body += statChip("Effects", mechanismEffectSummary(mech), false);
+        if (view.isSingle) {
+            body += statChip("Trigger", sourceKindLabel(mech.sourceKind), false);
+            body += statChip("State", sourceStateLabel(mech.sourceKind, view.singleState.active), view.active);
+            body += statChip("Source", sourceDisplayName(view.sourceId, mech.sourceKind, view.sourceObj), false);
+        } else {
+            body += statChip("Sources Active", String(view.pressed) + "/" + String(view.required), view.active);
+        }
+        body += "</div>";
+        body += controlBand("Runtime", runtimeControls);
+        if (configControls) body += controlBand("Mechanism Controls", configControls);
+
+        body += '<div style="margin-top:8px;">';
+        if (mech.rule.oneShot) body += detailStat("One-shot used", mech.runtime.oneShotUsed ? "YES" : "NO");
+        if (view.cooldownLeft > 0) body += detailStat("Cooldown", durationSecondsLabel(view.cooldownLeft) + " remaining");
+        if (view.pendingLeft > 0) body += detailStat("Pending", "Activates in " + durationSecondsLabel(view.pendingLeft));
+        body += "</div>";
+
+        return sectionCard("Overview", body, false);
+    }
+
+    function renderEditorLocking(mech, view) {
+        var body = "";
+        if (view.isSingle) return "";
+
+        body += detailStat("Mechanism lock", mech.locks.mechanismLocked ? (mech.locks.freezeWhenLocked ? "FROZEN" : "LOCKED") : "UNLOCKED");
+        body += detailStat("Config lock", mech.locks.configLocked ? "LOCKED" : "UNLOCKED");
+        body += detailStat("Auto-lock", mech.locks.autoLock ? "ON" : "OFF");
+        body += detailStat("Override", view.overrideActive ? "ACTIVE" : "INACTIVE");
+        return sectionCard("Locking", body, true);
+    }
+
+    function renderEditorMessages(mech, view) {
+        var body = "";
+
+        if (view.isSingle) {
+            body += mini("Set On", "!mech platemsgon " + view.sourceId + " ?{Trigger message|}", "Set trigger message");
+            body += mini("Set Off", "!mech platemsgoff " + view.sourceId + " ?{Release message|}", "Set release message");
+        } else if (view.editBlocked) {
+            body += miniDisabled("Set On", "Config locked");
+            body += miniDisabled("Set Off", "Config locked");
+        } else {
+            body += mini("Set On", "!mech groupmsgon " + mech.legacyId + " ?{Trigger message|}", "Set trigger message");
+            body += mini("Set Off", "!mech groupmsgoff " + mech.legacyId + " ?{Release message|}", "Set release message");
+        }
+
+        body += detailStat("On", mech.messages.on || "(none)");
+        body += detailStat("Off", mech.messages.off || "(none)");
+
+        if (view.isSingle) {
+            body += '<div style="margin-top:8px;">' + mini("Set effect message", "!mech effectmsg " + view.sourceId + " ?{Effect message|}", "Set primary effect narration") + "</div>";
+            body += detailStat("Primary effect message", String(view.primaryEffect.message || "").trim() || "(none)");
+        }
+
+        return sectionCard("Messages", body, true);
+    }
+
+    function renderEditorRule(mech, view) {
+        var body = "";
+
+        if (view.isSingle) {
+            body += mini("Press", "!mech effecttrigger " + view.sourceId + " press", "Fire on press");
+            body += mini("Release", "!mech effecttrigger " + view.sourceId + " release", "Fire on release");
+            body += mini("Both", "!mech effecttrigger " + view.sourceId + " both", "Fire on press and release");
+        } else if (view.editBlocked) {
+            body += miniDisabled("Require ALL", "Config locked");
+            body += miniDisabled("Set K", "Config locked");
+        } else {
+            body += mini("Require ALL", "!mech groupsetall " + mech.legacyId, "Require all sources");
+            body += mini("Set K", "!mech groupsetk " + mech.legacyId + " ?{Require how many sources?|2}", "Set K-of-N");
+        }
+
+        if (!view.editBlocked || view.isSingle) {
+            body += mini("Set delay", "!mech ruledelay " + view.ref + " ?{Delay in seconds|0}", "Delay activation");
+            body += mini("Set cooldown", "!mech rulecooldown " + view.ref + " ?{Cooldown in seconds|0}", "Cooldown after activation");
+            body += mini(mech.rule.oneShot ? "One-shot OFF" : "One-shot ON", "!mech ruleoneshot " + view.ref + " " + (mech.rule.oneShot ? "off" : "on"), "Toggle one-shot");
+            body += mini("Reset", "!mech reset " + view.ref, "Reset one-shot, cooldown, and pending state");
+        } else {
+            body += miniDisabled("Set delay", "Config locked");
+            body += miniDisabled("Set cooldown", "Config locked");
+            body += miniDisabled("One-shot", "Config locked");
+            body += miniDisabled("Reset", "Config locked");
+        }
+
+        body += detailStat("Current", mechanismRuleSummary(mech));
+        body += detailStat("Delay", durationSecondsLabel(mech.rule.delayMs));
+        body += detailStat("Cooldown", durationSecondsLabel(mech.rule.cooldownMs));
+        body += detailStat("One-shot", mech.rule.oneShot ? "ON" : "OFF");
+
+        return sectionCard("Rule", body, false);
+    }
+
+    function renderEditorTrigger(mech, view) {
+        var body = "";
+        if (!view.isSingle) return "";
+
+        if (getObj("graphic", view.sourceId)) {
+            body += mini("Pressure Plate", "!mech sourcetype " + view.sourceId + " pressurePlate", "Require full occupancy");
+            body += mini("Tripwire", "!mech sourcetype " + view.sourceId + " tripwire", "Trigger on any overlap");
+            body += mini("Proximity", "!mech sourcetype " + view.sourceId + " proximity", "Trigger when tokens enter a radius");
+            body += mini("Manual", "!mech sourcetype " + view.sourceId + " manual", "GM-controlled trigger state");
+            body += mini("Lever", "!mech sourcetype " + view.sourceId + " lever", "GM-controlled lever state");
+            body += mini("Button", "!mech sourcetype " + view.sourceId + " button", "GM-controlled button state");
+        }
+        if (getObj("door", view.sourceId)) {
+            body += mini("Door State", "!mech sourcetype " + view.sourceId + " doorState", "Fire when the Door Tool object matches a state");
+        }
+
+        body += detailStat("Current", sourceKindLabel(mech.sourceKind));
+
+        if (mech.sourceKind === "proximity") {
+            body += '<div style="margin-top:8px;">' + mini("Set range", "!mech proximityrange " + view.sourceId + " ?{Range in cells|1}", "Set proximity radius") + "</div>";
+            body += detailStat("Range", String(mech.triggerConfig.proximityRange) + " cell(s)");
+        }
+        if (mech.sourceKind === "manual") {
+            body += '<div style="margin-top:8px;">';
+            body += mini("Activate", "!mech manualon " + view.sourceId, "Set manual trigger active");
+            body += mini("Deactivate", "!mech manualoff " + view.sourceId, "Set manual trigger inactive");
+            body += mini("Toggle", "!mech manualtoggle " + view.sourceId, "Toggle manual trigger state");
+            body += "</div>";
+        }
+        if (mech.sourceKind === "lever") {
+            body += '<div style="margin-top:8px;">';
+            body += mini("Switch On", "!mech leveron " + view.sourceId, "Flip lever on");
+            body += mini("Switch Off", "!mech leveroff " + view.sourceId, "Flip lever off");
+            body += mini("Toggle", "!mech levertoggle " + view.sourceId, "Toggle lever state");
+            body += "</div>";
+        }
+        if (mech.sourceKind === "button") {
+            body += '<div style="margin-top:8px;">';
+            body += mini("Press", "!mech buttonpress " + view.sourceId, "Press the button");
+            body += mini("Release", "!mech buttonrelease " + view.sourceId, "Release the button");
+            body += mini("Toggle", "!mech buttontoggle " + view.sourceId, "Toggle button state");
+            body += "</div>";
+        }
+        if (mech.sourceKind === "doorState") {
+            body += '<div style="margin-top:8px;">';
+            body += mini("On Open", "!mech doorstatemode " + view.sourceId + " open", "Fire when the door is open");
+            body += mini("On Closed", "!mech doorstatemode " + view.sourceId + " closed", "Fire when the door is closed");
+            body += mini("On Locked", "!mech doorstatemode " + view.sourceId + " locked", "Fire when the door is locked");
+            body += mini("On Unlocked", "!mech doorstatemode " + view.sourceId + " unlocked", "Fire when the door is unlocked");
+            body += mini("On Revealed", "!mech doorstatemode " + view.sourceId + " revealed", "Fire when the door is revealed");
+            body += mini("On Hidden", "!mech doorstatemode " + view.sourceId + " hidden", "Fire when the door is hidden");
+            body += "</div>";
+            body += detailStat("Watch for", doorStateModeLabel(mech.triggerConfig.doorStateMode));
+        }
+
+        return sectionCard("Trigger", body, true);
+    }
+
+    function renderEditorSources(mech, view) {
+        var body = "";
+
+        if (!view.isSingle) {
+            if (view.editBlocked) body += miniDisabled("Add selected sources", "Config locked");
+            else body += mini("Add selected sources", "!mech groupaddplates " + mech.legacyId, "Add selected sources");
+        }
+
+        for (var i = 0; i < mech.sources.length; i++) {
+            var srcMech = getSingleMechanism(mech.sources[i]);
+            var src = getSourceObject(srcMech.legacyId, srcMech.sourceKind);
+            if (!src) continue;
+            body += '<div style="margin-top:6px;font-weight:900;">' + esc(sourceDisplayName(srcMech.legacyId, srcMech.sourceKind, src)) + ' ';
+            body += '<span style="color:#666;">(' + esc(sourceKindLabel(srcMech.sourceKind)) + ')</span> ';
+            body += mini("Ping", "!mech ping " + srcMech.legacyId, "Ping source");
+            if (!view.isSingle) {
+                if (view.editBlocked) body += miniDisabled("Remove", "Config locked");
+                else body += mini("Remove", "!mech groupdelplate " + mech.legacyId + " " + srcMech.legacyId, "Remove source");
+            }
+            body += "</div>";
+        }
+
+        if (!mech.sources.length) body += '<div style="margin-top:6px;color:#666;font-weight:900;">(No sources)</div>';
+        return sectionCard("Sources", body, true);
+    }
+
+    function renderEditorDoors(mech, view) {
+        var body = "";
+
+        if (view.isSingle) {
+            body += mini("Bind LOCK doors", "!mech add lock", "Select this source and doors, then click");
+            body += mini("Bind SECRET doors", "!mech add secret", "Select this source and doors, then click");
+        } else if (view.editBlocked) {
+            body += miniDisabled("Add LOCK", "Config locked");
+            body += miniDisabled("Add SECRET", "Config locked");
+        } else {
+            body += mini("Add LOCK", "!mech groupadddoors " + mech.legacyId + " lock", "Bind selected doors as lock");
+            body += mini("Add SECRET", "!mech groupadddoors " + mech.legacyId + " secret", "Bind selected doors as secret");
+        }
+
+        for (var doorId in mech.effects.doors) {
+            if (!mech.effects.doors.hasOwnProperty(doorId)) continue;
+            body += '<div style="margin-top:6px;font-weight:900;">' + esc(String(mech.effects.doors[doorId]).toUpperCase()) + " door …" + esc(shortId(doorId)) + " ";
+            if (!view.isSingle) {
+                if (view.editBlocked) body += miniDisabled("Detach", "Config locked");
+                else body += mini("Detach", "!mech groupdeldor " + mech.legacyId + " " + doorId, "Detach door");
+            }
+            body += "</div>";
+        }
+
+        if (!Object.keys(mech.effects.doors).length) body += '<div style="margin-top:6px;color:#666;font-weight:900;">(No doors)</div>';
+        return sectionCard("Doors", body, false);
+    }
+
+    function renderEditorPrimaryEffect(mech, view) {
+        var body = "";
+        var primaryEffect = view.primaryEffect;
+        if (!view.isSingle) return "";
+
+        body += mini("Alarm", "!mech effecttype " + view.sourceId + " alarm", "Narration or warning effect");
+        body += mini("Damage", "!mech effecttype " + view.sourceId + " damage", "Damage effect");
+        body += mini("Projectile", "!mech effecttype " + view.sourceId + " projectile", "Projectile-style damage effect");
+        body += mini("Save", "!mech effecttype " + view.sourceId + " save", "Save/check prompt effect");
+        body += mini("Status", "!mech effecttype " + view.sourceId + " status", "Apply status markers");
+        body += mini("Spawn", "!mech effecttype " + view.sourceId + " spawn", "Reveal selected spawn tokens");
+        body += mini("Teleport", "!mech effecttype " + view.sourceId + " teleport", "Teleport occupants");
+        body += mini("Pit / Move", "!mech effecttype " + view.sourceId + " pit", "Force-move or pit effect");
+        body += mini("Reveal", "!mech effecttype " + view.sourceId + " reveal", "Reveal hidden targets");
+        body += mini("Disable", "!mech effecttype " + view.sourceId + " none", "Disable primary effect without removing mechanism");
+        body += detailStat("Current type", primaryEffectTypeLabel(primaryEffect.type));
+        body += detailStat("Effects", mechanismEffectSummary(mech));
+        return sectionCard("Primary Effect", body, true);
+    }
+
+    function renderEditorPrimaryEffectDetails(mech, view) {
+        var primaryEffect = view.primaryEffect;
+        var body = "";
+        if (!view.isSingle) return "";
+
+        if (primaryEffect.type === "damage") {
+            body += mini("Set damage", "!mech effectdamage " + view.sourceId + " ?{Damage roll|1d6}", "Set damage roll");
+            body += detailStat("Damage", primaryEffect.damage);
+            return sectionCard("Damage", body, false);
+        }
+
+        if (primaryEffect.type === "projectile") {
+            body += mini("Set label", "!mech effectprojectilename " + view.sourceId + " ?{Projectile label|Dart volley}", "Set projectile label");
+            body += mini("Set damage", "!mech effectdamage " + view.sourceId + " ?{Damage roll|1d6}", "Set damage roll");
+            body += mini("Set dmg type", "!mech effectprojectiledmgtype " + view.sourceId + " ?{Damage type|piercing|slashing|bludgeoning|acid|cold|fire|force|lightning|necrotic|poison|psychic|radiant|thunder}", "Set projectile damage type");
+            body += detailStat("Label", String(primaryEffect.projectile.label || "").trim() || "(none)");
+            body += detailStat("Damage", primaryEffect.damage + damageTypeSuffix(primaryEffect.projectile.damageType));
+            return sectionCard("Projectile", body, false);
+        }
+
+        if (primaryEffect.type === "save") {
+            body += mini("Set label", "!mech effectsavelabel " + view.sourceId + " ?{Save label|DEX}", "Set save label");
+            body += mini("Set DC", "!mech effectsavedc " + view.sourceId + " ?{Save DC|12}", "Set save DC");
+            body += mini("Set success text", "!mech effectsavesuccessmsg " + view.sourceId + " ?{Success text|}", "Set success text");
+            body += mini("Set fail text", "!mech effectsavefailmsg " + view.sourceId + " ?{Fail text|}", "Set fail text");
+            body += mini("Success HALF", "!mech effectsavesuccess " + view.sourceId + " half", "Success takes half damage");
+            body += mini("Success NONE", "!mech effectsavesuccess " + view.sourceId + " none", "Success takes no damage");
+            body += mini("Set dmg type", "!mech effectsavedmgtype " + view.sourceId + " ?{Damage type|piercing|slashing|bludgeoning|acid|cold|fire|force|lightning|necrotic|poison|psychic|radiant|thunder}", "Set damage type");
+            body += mini("Set fail damage", "!mech effectsavefaildmg " + view.sourceId + " ?{Fail damage|1d6}", "Set fail damage");
+            body += detailStat("Save", String(primaryEffect.save.label).toUpperCase() + " DC " + String(primaryEffect.save.dc));
+            body += detailStat("Success result", String(primaryEffect.save.successMode || "none").toUpperCase());
+            body += detailStat("Damage type", String(primaryEffect.save.damageType || "").trim() || "(none)");
+            body += detailStat("Fail damage", String(primaryEffect.save.failDamage || "").trim() || "(none)");
+            return sectionCard("Save", body, false);
+        }
+
+        if (primaryEffect.type === "status") {
+            body += mini("Set markers", "!mech effectstatusmarkers " + view.sourceId + " ?{Markers (comma-separated)|cobweb}", "Set markers");
+            body += mini(primaryEffect.status.clearOnRelease ? "Clear on release: ON" : "Clear on release: OFF", "!mech effectstatusclear " + view.sourceId, "Toggle clear on release");
+            body += detailStat("Markers", describeStatusMarkers(primaryEffect));
+            return sectionCard("Status", body, false);
+        }
+
+        if (primaryEffect.type === "teleport") {
+            body += mini("Set destination", "!mech effectsetteleport " + view.sourceId, "Set destination from selection");
+            body += mini("Clear destination", "!mech effectclearteleport " + view.sourceId, "Clear destination");
+            body += detailStat("Destination", describeTeleportDestination(primaryEffect));
+            return sectionCard("Teleport", body, false);
+        }
+
+        if (primaryEffect.type === "pit") {
+            body += mini("Set destination", "!mech effectsetpit " + view.sourceId, "Set pit or force-move destination from selection");
+            body += mini("Clear destination", "!mech effectclearpit " + view.sourceId, "Clear pit destination");
+            body += mini("Set damage", "!mech effectpitdamage " + view.sourceId + " ?{Pit damage|}", "Set optional pit damage");
+            body += mini("Set dmg type", "!mech effectpitdmgtype " + view.sourceId + " ?{Damage type|bludgeoning|piercing|slashing|acid|cold|fire|force|lightning|necrotic|poison|psychic|radiant|thunder}", "Set pit damage type");
+            body += detailStat("Destination", describePitDestination(primaryEffect));
+            body += detailStat("Damage", (String(primaryEffect.pit.damage || "").trim() || "(none)") + damageTypeSuffix(primaryEffect.pit.damageType));
+            return sectionCard("Pit / Force Move", body, false);
+        }
+
+        if (primaryEffect.type === "reveal") {
+            body += mini("Set reveal targets", "!mech effectsetreveal " + view.sourceId, "Set reveal targets from selection");
+            body += mini("Clear reveal targets", "!mech effectclearreveal " + view.sourceId, "Clear reveal targets");
+            body += detailStat("Reveal targets", describeRevealTargets(primaryEffect));
+            return sectionCard("Reveal Targets", body, false);
+        }
+
+        if (primaryEffect.type === "spawn") {
+            body += mini("Set spawn targets", "!mech effectsetspawn " + view.sourceId, "Set spawn targets from selection");
+            body += mini("Clear spawn targets", "!mech effectclearspawn " + view.sourceId, "Clear spawn targets");
+            body += detailStat("Spawn targets", describeSpawnTargets(primaryEffect));
+            return sectionCard("Spawn Targets", body, false);
+        }
+
+        return "";
+    }
+
+    function renderEditorExtraEffects(mech, view) {
+        var body = "";
+        var primaryEffect = view.primaryEffect;
+        if (!view.isSingle) return "";
+
+        if (primaryEffect.type !== "reveal") body += mini(primaryEffect.effects.revealAlso ? "Reveal targets: ON" : "Reveal targets: OFF", "!mech effectrevealtoggle " + view.sourceId, "Toggle reveal effect");
+        body += mini("Set reveal targets", "!mech effectsetreveal " + view.sourceId, "Set reveal targets");
+        body += mini("Clear reveal targets", "!mech effectclearreveal " + view.sourceId, "Clear reveal targets");
+        body += mini(primaryEffect.effects.lockToken ? "Lock token: ON" : "Lock token: OFF", "!mech effectlocktoggle " + view.sourceId, "Toggle lock token effect");
+        body += mini("Set lock marker", "!mech effectlockmarker " + view.sourceId + " ?{Lock marker|fishing-net}", "Set lock marker");
+        body += mini("Unlock tokens", "!mech effectunlock " + view.sourceId, "Unlock affected tokens");
+        body += detailStat("Reveal targets", describeRevealTargets(primaryEffect));
+        body += detailStat("Lock effect", primaryEffect.effects.lockToken ? "ON" : "OFF");
+        body += detailStat("Lock marker", String(primaryEffect.effects.lockMarker || "").trim() || "(none)");
+        body += detailStat("Locked tokens", String(lockedCountForSource(view.sourceId)));
+
+        return sectionCard("Extra Effects", body, true);
+    }
+
+    function renderMechanismEditor(playerid, ref) {
+        var mech = (typeof ref === "object") ? ref : resolveMechanismRef(ref);
+        if (!mech) return whisper("Mechanism not found.");
+
+        backfillMechanismData(mech);
+        var view = buildMechanismEditorView(mech);
         var html = "";
 
         html += "<div style=\"border:2px solid #111;border-radius:12px;overflow:hidden;max-width:760px;font-family:Arial,sans-serif;\">";
@@ -2144,316 +2550,16 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         html += "<div style=\"color:#cfcfcf;font-weight:900;font-size:12px;margin-top:2px;\">" + esc(mechanismDisplayName(mech)) + " • " + esc(mechanismRuleSummary(mech)) + "</div>";
         html += "</div>";
         html += "<div style=\"background:#fff;padding:10px;\">";
-
-        html += "<div style=\"border:2px solid #111;border-radius:10px;padding:10px;margin-bottom:10px;\">";
-        html += badge(active ? "ACTIVE" : "INACTIVE", active);
-        html += badge(isSingle ? "SINGLE" : "MULTI", false);
-        if (isSingle) html += badge((trap.enabled && trap.type !== "none") ? "PRIMARY EFFECT" : "NO PRIMARY EFFECT", false);
-        if (!isSingle && mech.locks.mechanismLocked) html += badge(mech.locks.freezeWhenLocked ? "FROZEN" : "LOCKED", false);
-        if (!isSingle && mech.locks.configLocked) html += badge("CONFIG", false);
-        if (overrideActive) html += badge("OVERRIDE", true);
-        if (!isSingle && mech.locks.autoLock) html += badge("AUTOLOCK", true);
-        html += "<div style=\"margin-top:8px;\">";
-        html += iconBtn("↩️", "!mech ui", "Back to mechanism list");
-        html += iconBtn("🔄", "!mech edit " + mech.legacyId, "Refresh mechanism configuration");
-        if (isSingle) {
-            html += iconBtn("🔍", "!mech ping " + sourceId, "Ping trigger");
-            html += iconBtn("✅", "!mech checkplate " + sourceId, "Check mechanism");
-            html += iconBtn("⬆️", "!mech simopen " + sourceId, "Force open (simulate triggered)");
-            html += iconBtn("⬇️", "!mech simclose " + sourceId, "Force close (simulate released)");
-            html += iconBtn("🗑️", "!mech removeplate " + sourceId, "Remove mechanism");
-        } else {
-            html += iconBtn("✅", "!mech groupcheck " + mech.legacyId, "Check mechanism");
-            if (editBlocked) html += iconBtnDisabled("🗑️", "Config locked");
-            else html += iconBtn("🗑️", "!mech groupremove " + mech.legacyId, "Remove mechanism");
-        }
-        if (isSingle) {
-            html += iconBtn("💣", "!mech effecttoggle " + sourceId, (trap.enabled && trap.type !== "none") ? "Disable primary effect" : "Enable primary effect");
-            html += iconBtn("🔁", "!mech reset " + sourceId, "Reset mechanism runtime");
-        } else {
-            html += iconBtn(mech.locks.mechanismLocked ? "🔒" : "🔓", "!mech grouplock " + mech.legacyId, "Toggle mechanism lock");
-            html += iconBtn(mech.locks.configLocked ? "🧱" : "✏️", "!mech groupcfglock " + mech.legacyId, "Toggle config lock");
-            html += iconBtn(mech.locks.autoLock ? "⭐" : "☆", "!mech groupautolock " + mech.legacyId, "Toggle auto-lock after first trigger");
-            html += iconBtn("🔁", "!mech reset " + mech.legacyId, "Reset mechanism runtime");
-        }
-        html += "</div>";
-        if (isSingle) {
-            html += "<div style=\"margin-top:8px;font-weight:900;\">Source type: <span style=\"color:#333;\">" + esc(sourceKindLabel(mech.sourceKind)) + "</span></div>";
-            html += "<div style=\"margin-top:4px;font-weight:900;\">State: <span style=\"color:#333;\">" + esc(sourceStateLabel(mech.sourceKind, singleState.active)) + "</span></div>";
-            html += "<div style=\"margin-top:4px;font-weight:900;\">Source: <span style=\"color:#333;\">" + esc(sourceDisplayName(sourceId, mech.sourceKind, sourceObj)) + "</span></div>";
-        } else if (!isSingle) {
-            html += "<div style=\"margin-top:8px;font-weight:900;\">Pressed: <span style=\"color:#333;\">" + esc(String(pressed)) + "/" + esc(String(required)) + "</span></div>";
-        }
-        if (mech.rule.oneShot) html += "<div style=\"margin-top:4px;font-weight:900;\">One-shot used: <span style=\"color:#333;\">" + esc(mech.runtime.oneShotUsed ? "YES" : "NO") + "</span></div>";
-        if (cooldownLeft > 0) html += "<div style=\"margin-top:4px;font-weight:900;\">Cooldown: <span style=\"color:#333;\">" + esc(durationSecondsLabel(cooldownLeft)) + " remaining</span></div>";
-        if (mech.runtime.pendingUntil > Date.now()) html += "<div style=\"margin-top:4px;font-weight:900;\">Pending: <span style=\"color:#333;\">Activates in " + esc(durationSecondsLabel(mech.runtime.pendingUntil - Date.now())) + "</span></div>";
-        html += "</div>";
-
-        if (!isSingle) {
-            html += "<div style=\"border:2px solid #111;border-radius:10px;padding:10px;margin-bottom:10px;background:#fafafa;\">";
-            html += "<div style=\"font-weight:900;font-size:16px;margin-bottom:6px;\">Locking</div>";
-            html += "<div style=\"margin-top:4px;font-weight:900;\">Mechanism lock: <span style=\"color:#333;\">" + esc(mech.locks.mechanismLocked ? (mech.locks.freezeWhenLocked ? "FROZEN" : "LOCKED") : "UNLOCKED") + "</span></div>";
-            html += '<div style="margin-top:4px;font-weight:900;">Config lock: <span style="color:#333;">' + esc(mech.locks.configLocked ? "LOCKED" : "UNLOCKED") + "</span></div>";
-            html += '<div style="margin-top:4px;font-weight:900;">Auto-lock: <span style="color:#333;">' + esc(mech.locks.autoLock ? "ON" : "OFF") + "</span></div>";
-            html += '<div style="margin-top:4px;font-weight:900;">Override: <span style="color:#333;">' + esc(overrideActive ? "ACTIVE" : "INACTIVE") + "</span></div>";
-            html += "</div>";
-        }
-
-        html += '<div style="border:2px solid #111;border-radius:10px;padding:10px;margin-bottom:10px;background:#fafafa;">';
-        html += '<div style="font-weight:900;font-size:16px;margin-bottom:6px;">Messages</div>';
-        if (isSingle) {
-            html += mini("Set On", "!mech platemsgon " + sourceId + " ?{Trigger message|}", "Set trigger message");
-            html += mini("Set Off", "!mech platemsgoff " + sourceId + " ?{Release message|}", "Set release message");
-        } else if (editBlocked) {
-            html += miniDisabled("Set On", "Config locked");
-            html += miniDisabled("Set Off", "Config locked");
-        } else {
-            html += mini("Set On", "!mech groupmsgon " + mech.legacyId + " ?{Trigger message|}", "Set trigger message");
-            html += mini("Set Off", "!mech groupmsgoff " + mech.legacyId + " ?{Release message|}", "Set release message");
-        }
-        html += '<div style="margin-top:8px;font-weight:900;">On: <span style="color:#333;">' + esc(mech.messages.on || "(none)") + "</span></div>";
-        html += '<div style="margin-top:4px;font-weight:900;">Off: <span style="color:#333;">' + esc(mech.messages.off || "(none)") + "</span></div>";
-        if (isSingle) {
-            html += '<div style="margin-top:8px;font-weight:900;">Primary effect message: <span style="color:#333;">' + esc(String(trap.message || "").trim() || "(none)") + "</span></div>";
-            html += mini("Set effect message", "!mech effectmsg " + sourceId + " ?{Effect message|}", "Set primary effect narration");
-        }
-        html += "</div>";
-
-        html += '<div style="border:2px solid #111;border-radius:10px;padding:10px;margin-bottom:10px;">';
-        html += '<div style="font-weight:900;font-size:16px;margin-bottom:6px;">Rule</div>';
-        if (isSingle) {
-            html += mini("Press", "!mech effecttrigger " + sourceId + " press", "Fire on press");
-            html += mini("Release", "!mech effecttrigger " + sourceId + " release", "Fire on release");
-            html += mini("Both", "!mech effecttrigger " + sourceId + " both", "Fire on press and release");
-        } else if (editBlocked) {
-            html += miniDisabled("Require ALL", "Config locked");
-            html += miniDisabled("Set K", "Config locked");
-        } else {
-            html += mini("Require ALL", "!mech groupsetall " + mech.legacyId, "Require all sources");
-            html += mini("Set K", "!mech groupsetk " + mech.legacyId + " ?{Require how many sources?|2}", "Set K-of-N");
-        }
-        if (!editBlocked || isSingle) {
-            html += mini("Set delay", "!mech ruledelay " + (isSingle ? sourceId : mech.legacyId) + " ?{Delay in seconds|0}", "Delay activation");
-            html += mini("Set cooldown", "!mech rulecooldown " + (isSingle ? sourceId : mech.legacyId) + " ?{Cooldown in seconds|0}", "Cooldown after activation");
-            html += mini(mech.rule.oneShot ? "One-shot OFF" : "One-shot ON", "!mech ruleoneshot " + (isSingle ? sourceId : mech.legacyId) + " " + (mech.rule.oneShot ? "off" : "on"), "Toggle one-shot");
-            html += mini("Reset", "!mech reset " + (isSingle ? sourceId : mech.legacyId), "Reset one-shot, cooldown, and pending state");
-        } else {
-            html += miniDisabled("Set delay", "Config locked");
-            html += miniDisabled("Set cooldown", "Config locked");
-            html += miniDisabled("One-shot", "Config locked");
-            html += miniDisabled("Reset", "Config locked");
-        }
-        html += '<div style="margin-top:8px;font-weight:900;">Current: <span style="color:#333;">' + esc(mechanismRuleSummary(mech)) + "</span></div>";
-        html += '<div style="margin-top:4px;font-weight:900;">Delay: <span style="color:#333;">' + esc(durationSecondsLabel(mech.rule.delayMs)) + "</span></div>";
-        html += '<div style="margin-top:4px;font-weight:900;">Cooldown: <span style="color:#333;">' + esc(durationSecondsLabel(mech.rule.cooldownMs)) + "</span></div>";
-        html += '<div style="margin-top:4px;font-weight:900;">One-shot: <span style="color:#333;">' + esc(mech.rule.oneShot ? "ON" : "OFF") + "</span></div>";
-        html += "</div>";
-
-        if (isSingle) {
-            html += '<div style="border:2px solid #111;border-radius:10px;padding:10px;margin-bottom:10px;background:#fafafa;">';
-            html += '<div style="font-weight:900;font-size:16px;margin-bottom:6px;">Trigger Type</div>';
-            if (getObj("graphic", sourceId)) {
-                html += mini("Pressure Plate", "!mech sourcetype " + sourceId + " pressurePlate", "Require full occupancy");
-                html += mini("Tripwire", "!mech sourcetype " + sourceId + " tripwire", "Trigger on any overlap");
-                html += mini("Proximity", "!mech sourcetype " + sourceId + " proximity", "Trigger when tokens enter a radius");
-                html += mini("Manual", "!mech sourcetype " + sourceId + " manual", "GM-controlled trigger state");
-                html += mini("Lever", "!mech sourcetype " + sourceId + " lever", "GM-controlled lever state");
-                html += mini("Button", "!mech sourcetype " + sourceId + " button", "GM-controlled button state");
-            }
-            if (getObj("door", sourceId)) {
-                html += mini("Door State", "!mech sourcetype " + sourceId + " doorState", "Fire when the Door Tool object matches a state");
-            }
-            html += '<div style="margin-top:8px;font-weight:900;">Current: <span style="color:#333;">' + esc(sourceKindLabel(mech.sourceKind)) + "</span></div>";
-            if (mech.sourceKind === "proximity") {
-                html += mini("Set range", "!mech proximityrange " + sourceId + " ?{Range in cells|1}", "Set proximity radius");
-                html += '<div style="margin-top:4px;font-weight:900;">Range: <span style="color:#333;">' + esc(String(mech.triggerConfig.proximityRange)) + " cell(s)</span></div>";
-            }
-            if (mech.sourceKind === "manual") {
-                html += mini("Activate", "!mech manualon " + sourceId, "Set manual trigger active");
-                html += mini("Deactivate", "!mech manualoff " + sourceId, "Set manual trigger inactive");
-                html += mini("Toggle", "!mech manualtoggle " + sourceId, "Toggle manual trigger state");
-            }
-            if (mech.sourceKind === "lever") {
-                html += mini("Switch On", "!mech leveron " + sourceId, "Flip lever on");
-                html += mini("Switch Off", "!mech leveroff " + sourceId, "Flip lever off");
-                html += mini("Toggle", "!mech levertoggle " + sourceId, "Toggle lever state");
-            }
-            if (mech.sourceKind === "button") {
-                html += mini("Press", "!mech buttonpress " + sourceId, "Press the button");
-                html += mini("Release", "!mech buttonrelease " + sourceId, "Release the button");
-                html += mini("Toggle", "!mech buttontoggle " + sourceId, "Toggle button state");
-            }
-            if (mech.sourceKind === "doorState") {
-                html += mini("On Open", "!mech doorstatemode " + sourceId + " open", "Fire when the door is open");
-                html += mini("On Closed", "!mech doorstatemode " + sourceId + " closed", "Fire when the door is closed");
-                html += mini("On Locked", "!mech doorstatemode " + sourceId + " locked", "Fire when the door is locked");
-                html += mini("On Unlocked", "!mech doorstatemode " + sourceId + " unlocked", "Fire when the door is unlocked");
-                html += mini("On Revealed", "!mech doorstatemode " + sourceId + " revealed", "Fire when the door is revealed");
-                html += mini("On Hidden", "!mech doorstatemode " + sourceId + " hidden", "Fire when the door is hidden");
-                html += '<div style="margin-top:4px;font-weight:900;">Watch for: <span style="color:#333;">' + esc(doorStateModeLabel(mech.triggerConfig.doorStateMode)) + "</span></div>";
-            }
-            html += "</div>";
-        }
-
-        html += '<div style="border:2px solid #111;border-radius:10px;padding:10px;margin-bottom:10px;background:#fafafa;">';
-        html += '<div style="font-weight:900;font-size:16px;margin-bottom:6px;">Sources</div>';
-        if (!isSingle) {
-            if (editBlocked) html += miniDisabled("Add selected sources", "Config locked");
-            else html += mini("Add selected sources", "!mech groupaddplates " + mech.legacyId, "Add selected sources");
-        }
-        for (var i = 0; i < mech.sources.length; i++) {
-            var srcMech = getSingleMechanism(mech.sources[i]);
-            var src = getSourceObject(srcMech.legacyId, srcMech.sourceKind);
-            if (!src) continue;
-            html += '<div style="margin-top:6px;font-weight:900;">' + esc(sourceDisplayName(srcMech.legacyId, srcMech.sourceKind, src)) + ' ';
-            html += '<span style="color:#666;">(' + esc(sourceKindLabel(srcMech.sourceKind)) + ')</span> ';
-            html += mini("Ping", "!mech ping " + srcMech.legacyId, "Ping source");
-            if (!isSingle) {
-                if (editBlocked) html += miniDisabled("Remove", "Config locked");
-                else html += mini("Remove", "!mech groupdelplate " + mech.legacyId + " " + srcMech.legacyId, "Remove source");
-            }
-            html += "</div>";
-        }
-        if (!mech.sources.length) html += '<div style="margin-top:6px;color:#666;font-weight:900;">(No sources)</div>';
-        html += "</div>";
-
-        html += '<div style="border:2px solid #111;border-radius:10px;padding:10px;margin-bottom:10px;">';
-        html += '<div style="font-weight:900;font-size:16px;margin-bottom:6px;">Doors</div>';
-        if (isSingle) {
-            html += mini("Bind LOCK doors", "!mech add lock", "Select this source and doors, then click");
-            html += mini("Bind SECRET doors", "!mech add secret", "Select this source and doors, then click");
-        } else if (editBlocked) {
-            html += miniDisabled("Add LOCK", "Config locked");
-            html += miniDisabled("Add SECRET", "Config locked");
-        } else {
-            html += mini("Add LOCK", "!mech groupadddoors " + mech.legacyId + " lock", "Bind selected doors as lock");
-            html += mini("Add SECRET", "!mech groupadddoors " + mech.legacyId + " secret", "Bind selected doors as secret");
-        }
-        for (var doorId in mech.effects.doors) {
-            if (!mech.effects.doors.hasOwnProperty(doorId)) continue;
-            html += '<div style="margin-top:6px;font-weight:900;">' + esc(String(mech.effects.doors[doorId]).toUpperCase()) + " door …" + esc(shortId(doorId)) + " ";
-            if (!isSingle) {
-                if (editBlocked) html += miniDisabled("Detach", "Config locked");
-                else html += mini("Detach", "!mech groupdeldor " + mech.legacyId + " " + doorId, "Detach door");
-            }
-            html += "</div>";
-        }
-        if (!Object.keys(mech.effects.doors).length) html += '<div style="margin-top:6px;color:#666;font-weight:900;">(No doors)</div>';
-        html += "</div>";
-
-        if (isSingle) {
-            html += '<div style="border:2px solid #111;border-radius:10px;padding:10px;margin-bottom:10px;background:#fafafa;">';
-            html += '<div style="font-weight:900;font-size:16px;margin-bottom:6px;">Primary Effect</div>';
-            html += mini("Alarm", "!mech effecttype " + sourceId + " alarm", "Narration or warning effect");
-            html += mini("Damage", "!mech effecttype " + sourceId + " damage", "Damage effect");
-            html += mini("Projectile", "!mech effecttype " + sourceId + " projectile", "Projectile-style damage effect");
-            html += mini("Save", "!mech effecttype " + sourceId + " save", "Save/check prompt effect");
-            html += mini("Status", "!mech effecttype " + sourceId + " status", "Apply status markers");
-            html += mini("Spawn", "!mech effecttype " + sourceId + " spawn", "Reveal selected spawn tokens");
-            html += mini("Teleport", "!mech effecttype " + sourceId + " teleport", "Teleport occupants");
-            html += mini("Pit / Move", "!mech effecttype " + sourceId + " pit", "Force-move or pit effect");
-            html += mini("Reveal", "!mech effecttype " + sourceId + " reveal", "Reveal hidden targets");
-            html += mini("Disable", "!mech effecttype " + sourceId + " none", "Disable primary effect without removing mechanism");
-            html += '<div style="margin-top:8px;font-weight:900;">Current type: <span style="color:#333;">' + esc(primaryEffectTypeLabel(trap.type)) + "</span></div>";
-            html += '<div style="margin-top:4px;font-weight:900;">Effects: <span style="color:#333;">' + esc(mechanismEffectSummary(mech)) + "</span></div>";
-            html += "</div>";
-
-            if (trap.type === "damage") {
-                html += '<div style="border:2px solid #111;border-radius:10px;padding:10px;margin-bottom:10px;">';
-                html += '<div style="font-weight:900;font-size:16px;margin-bottom:6px;">Damage</div>';
-                html += mini("Set damage", "!mech effectdamage " + sourceId + " ?{Damage roll|1d6}", "Set damage roll");
-                html += '<div style="margin-top:8px;font-weight:900;">Damage: <span style="color:#333;">' + esc(trap.damage) + "</span></div>";
-                html += "</div>";
-            }
-
-            if (trap.type === "projectile") {
-                html += '<div style="border:2px solid #111;border-radius:10px;padding:10px;margin-bottom:10px;">';
-                html += '<div style="font-weight:900;font-size:16px;margin-bottom:6px;">Projectile</div>';
-                html += mini("Set label", "!mech effectprojectilename " + sourceId + " ?{Projectile label|Dart volley}", "Set projectile label");
-                html += mini("Set damage", "!mech effectdamage " + sourceId + " ?{Damage roll|1d6}", "Set damage roll");
-                html += mini("Set dmg type", "!mech effectprojectiledmgtype " + sourceId + " ?{Damage type|piercing|slashing|bludgeoning|acid|cold|fire|force|lightning|necrotic|poison|psychic|radiant|thunder}", "Set projectile damage type");
-                html += '<div style="margin-top:8px;font-weight:900;">Label: <span style="color:#333;">' + esc(String(trap.projectile.label || "").trim() || "(none)") + "</span></div>";
-                html += '<div style="margin-top:4px;font-weight:900;">Damage: <span style="color:#333;">' + esc(trap.damage) + damageTypeSuffix(trap.projectile.damageType) + "</span></div>";
-                html += "</div>";
-            }
-
-            if (trap.type === "save") {
-                html += '<div style="border:2px solid #111;border-radius:10px;padding:10px;margin-bottom:10px;">';
-                html += '<div style="font-weight:900;font-size:16px;margin-bottom:6px;">Save</div>';
-                html += mini("Set label", "!mech effectsavelabel " + sourceId + " ?{Save label|DEX}", "Set save label");
-                html += mini("Set DC", "!mech effectsavedc " + sourceId + " ?{Save DC|12}", "Set save DC");
-                html += mini("Set success text", "!mech effectsavesuccessmsg " + sourceId + " ?{Success text|}", "Set success text");
-                html += mini("Set fail text", "!mech effectsavefailmsg " + sourceId + " ?{Fail text|}", "Set fail text");
-                html += mini("Success HALF", "!mech effectsavesuccess " + sourceId + " half", "Success takes half damage");
-                html += mini("Success NONE", "!mech effectsavesuccess " + sourceId + " none", "Success takes no damage");
-                html += mini("Set dmg type", "!mech effectsavedmgtype " + sourceId + " ?{Damage type|piercing|slashing|bludgeoning|acid|cold|fire|force|lightning|necrotic|poison|psychic|radiant|thunder}", "Set damage type");
-                html += mini("Set fail damage", "!mech effectsavefaildmg " + sourceId + " ?{Fail damage|1d6}", "Set fail damage");
-                html += '<div style="margin-top:8px;font-weight:900;">Save: <span style="color:#333;">' + esc(String(trap.save.label).toUpperCase()) + " DC " + esc(String(trap.save.dc)) + "</span></div>";
-                html += '<div style="margin-top:4px;font-weight:900;">Success result: <span style="color:#333;">' + esc(String(trap.save.successMode || "none").toUpperCase()) + "</span></div>";
-                html += '<div style="margin-top:4px;font-weight:900;">Damage type: <span style="color:#333;">' + esc(String(trap.save.damageType || "").trim() || "(none)") + "</span></div>";
-                html += '<div style="margin-top:4px;font-weight:900;">Fail damage: <span style="color:#333;">' + esc(String(trap.save.failDamage || "").trim() || "(none)") + "</span></div>";
-                html += "</div>";
-            }
-
-            if (trap.type === "status") {
-                html += '<div style="border:2px solid #111;border-radius:10px;padding:10px;margin-bottom:10px;">';
-                html += '<div style="font-weight:900;font-size:16px;margin-bottom:6px;">Status</div>';
-                html += mini("Set markers", "!mech effectstatusmarkers " + sourceId + " ?{Markers (comma-separated)|cobweb}", "Set markers");
-                html += mini(trap.status.clearOnRelease ? "Clear on release: ON" : "Clear on release: OFF", "!mech effectstatusclear " + sourceId, "Toggle clear on release");
-                html += '<div style="margin-top:8px;font-weight:900;">Markers: <span style="color:#333;">' + esc(describeStatusMarkers(trap)) + "</span></div>";
-                html += "</div>";
-            }
-
-            if (trap.type === "teleport") {
-                html += '<div style="border:2px solid #111;border-radius:10px;padding:10px;margin-bottom:10px;">';
-                html += '<div style="font-weight:900;font-size:16px;margin-bottom:6px;">Teleport</div>';
-                html += mini("Set destination", "!mech effectsetteleport " + sourceId, "Set destination from selection");
-                html += mini("Clear destination", "!mech effectclearteleport " + sourceId, "Clear destination");
-                html += '<div style="margin-top:8px;font-weight:900;">Destination: <span style="color:#333;">' + esc(describeTeleportDestination(trap)) + "</span></div>";
-                html += "</div>";
-            }
-
-            if (trap.type === "pit") {
-                html += '<div style="border:2px solid #111;border-radius:10px;padding:10px;margin-bottom:10px;">';
-                html += '<div style="font-weight:900;font-size:16px;margin-bottom:6px;">Pit / Force Move</div>';
-                html += mini("Set destination", "!mech effectsetpit " + sourceId, "Set pit or force-move destination from selection");
-                html += mini("Clear destination", "!mech effectclearpit " + sourceId, "Clear pit destination");
-                html += mini("Set damage", "!mech effectpitdamage " + sourceId + " ?{Pit damage|}", "Set optional pit damage");
-                html += mini("Set dmg type", "!mech effectpitdmgtype " + sourceId + " ?{Damage type|bludgeoning|piercing|slashing|acid|cold|fire|force|lightning|necrotic|poison|psychic|radiant|thunder}", "Set pit damage type");
-                html += '<div style="margin-top:8px;font-weight:900;">Destination: <span style="color:#333;">' + esc(describePitDestination(trap)) + "</span></div>";
-                html += '<div style="margin-top:4px;font-weight:900;">Damage: <span style="color:#333;">' + esc(String(trap.pit.damage || "").trim() || "(none)") + damageTypeSuffix(trap.pit.damageType) + "</span></div>";
-                html += "</div>";
-            }
-
-            if (trap.type === "reveal" || trap.type === "spawn") {
-                html += '<div style="border:2px solid #111;border-radius:10px;padding:10px;margin-bottom:10px;">';
-                html += '<div style="font-weight:900;font-size:16px;margin-bottom:6px;">Effect Targets</div>';
-                if (trap.type === "reveal") {
-                    html += mini("Set reveal targets", "!mech effectsetreveal " + sourceId, "Set reveal targets from selection");
-                    html += mini("Clear reveal targets", "!mech effectclearreveal " + sourceId, "Clear reveal targets");
-                    html += '<div style="margin-top:8px;font-weight:900;">Reveal targets: <span style="color:#333;">' + esc(describeRevealTargets(trap)) + "</span></div>";
-                } else {
-                    html += mini("Set spawn targets", "!mech effectsetspawn " + sourceId, "Set spawn targets from selection");
-                    html += mini("Clear spawn targets", "!mech effectclearspawn " + sourceId, "Clear spawn targets");
-                    html += '<div style="margin-top:8px;font-weight:900;">Spawn targets: <span style="color:#333;">' + esc(describeSpawnTargets(trap)) + "</span></div>";
-                }
-                html += "</div>";
-            }
-
-            html += '<div style="border:2px solid #111;border-radius:10px;padding:10px;margin-bottom:10px;background:#fafafa;">';
-            html += '<div style="font-weight:900;font-size:16px;margin-bottom:6px;">Extra Effects</div>';
-            if (trap.type !== "reveal") html += mini(trap.effects.revealAlso ? "Reveal targets: ON" : "Reveal targets: OFF", "!mech effectrevealtoggle " + sourceId, "Toggle reveal effect");
-            html += mini("Set reveal targets", "!mech effectsetreveal " + sourceId, "Set reveal targets");
-            html += mini("Clear reveal targets", "!mech effectclearreveal " + sourceId, "Clear reveal targets");
-            html += mini(trap.effects.lockToken ? "Lock token: ON" : "Lock token: OFF", "!mech effectlocktoggle " + sourceId, "Toggle lock token effect");
-            html += mini("Set lock marker", "!mech effectlockmarker " + sourceId + " ?{Lock marker|fishing-net}", "Set lock marker");
-            html += mini("Unlock tokens", "!mech effectunlock " + sourceId, "Unlock affected tokens");
-            html += '<div style="margin-top:8px;font-weight:900;">Reveal targets: <span style="color:#333;">' + esc(describeRevealTargets(trap)) + "</span></div>";
-            html += '<div style="margin-top:4px;font-weight:900;">Lock effect: <span style="color:#333;">' + esc(trap.effects.lockToken ? "ON" : "OFF") + "</span></div>";
-            html += '<div style="margin-top:4px;font-weight:900;">Lock marker: <span style="color:#333;">' + esc(String(trap.effects.lockMarker || "").trim() || "(none)") + "</span></div>";
-            html += '<div style="margin-top:4px;font-weight:900;">Locked tokens: <span style="color:#333;">' + esc(String(lockedCountForSource(sourceId))) + "</span></div>";
-            html += "</div>";
-        }
+        html += renderEditorOverview(mech, view);
+        html += renderEditorLocking(mech, view);
+        html += renderEditorMessages(mech, view);
+        html += renderEditorRule(mech, view);
+        html += renderEditorTrigger(mech, view);
+        html += renderEditorSources(mech, view);
+        html += renderEditorDoors(mech, view);
+        html += renderEditorPrimaryEffect(mech, view);
+        html += renderEditorPrimaryEffectDetails(mech, view);
+        html += renderEditorExtraEffects(mech, view);
 
         html += "</div></div>";
         whisper(html);
@@ -2753,157 +2859,97 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         mechs.sort(sortMechanismsForUi);
 
         var html = "";
-        html += '<div style="border:2px solid #111;border-radius:12px;overflow:hidden;max-width:860px;font-family:Arial,sans-serif;">';
-
-        // header
-        html += '<div style="background:#000;color:#fff;padding:10px 12px;">';
-        html += '<div style="font-weight:900;font-size:20px;">Mechanism List</div>';
-        html += '<div style="color:#cfcfcf;font-weight:900;font-size:12px;margin-top:2px;">UI Page: ' + esc(pageName) + ' (…' + esc(shortId(pageId)) + ')</div>';
+        html += '<div style="border:2px solid #111;border-radius:14px;overflow:hidden;max-width:920px;font-family:Arial,sans-serif;">';
+        html += '<div style="background:#111;color:#fff;padding:12px 14px;">';
+        html += '<div style="font-weight:900;font-size:22px;">Trigger Mechanisms</div>';
+        html += '<div style="color:#d6d3d1;font-weight:900;font-size:12px;margin-top:2px;">Page: ' + esc(pageName) + ' (…' + esc(shortId(pageId)) + ')</div>';
         html += "</div>";
+        html += '<div style="background:#fcfbf7;padding:10px;">';
 
-        // body
-        html += '<div style="background:#fff;padding:10px;">';
+        html += sectionCard("Create Triggers",
+            mini("Pressure Plate", "!mech make ?{Trigger name|Pressure_Plate} pressurePlate", "Create pressure plate from selection") +
+            mini("Tripwire", "!mech make ?{Trigger name|Tripwire} tripwire", "Create tripwire from selection") +
+            mini("Proximity", "!mech make ?{Trigger name|Proximity_Zone} proximity", "Create proximity trigger from selection") +
+            mini("Manual", "!mech make ?{Trigger name|Manual_Trigger} manual", "Create manual trigger") +
+            mini("Lever", "!mech make ?{Trigger name|Lever} lever", "Create lever trigger") +
+            mini("Button", "!mech make ?{Trigger name|Button} button", "Create button trigger") +
+            mini("Door State", "!mech make ?{Trigger name|Door_Trigger} doorState", "Create door-state trigger"),
+            false
+        );
 
-        // global controls
-        html += '<div style="border:2px solid #111;border-radius:10px;padding:10px;margin-bottom:10px;">';
-        html += '<div style="font-weight:900;font-size:16px;margin-bottom:6px;">Controls</div>';
-        html += iconBtn("🧱", "!mech make ?{Trigger name|Pressure_Plate} pressurePlate", "Create pressure plate from selected trigger");
-        html += iconBtn("🪤", "!mech make ?{Trigger name|Tripwire} tripwire", "Create tripwire from selected trigger");
-        html += iconBtn("📡", "!mech make ?{Trigger name|Proximity_Zone} proximity", "Create proximity trigger from selected token");
-        html += iconBtn("🎛️", "!mech make ?{Trigger name|Manual_Trigger} manual", "Create manual trigger from selected token");
-        html += iconBtn("🎚️", "!mech make ?{Trigger name|Lever} lever", "Create a lever trigger from selected token");
-        html += iconBtn("🔘", "!mech make ?{Trigger name|Button} button", "Create a button trigger from selected token");
-        html += iconBtn("🚪", "!mech make ?{Trigger name|Door_Trigger} doorState", "Create a door-state trigger from selected Door Tool doors");
-        html += iconBtn("🧭", "!mech setpage", "Use Current Page (Set)");
-        html += iconBtn("🔄", "!mech ui", "Refresh UI");
-        html += iconBtn("✅", "!mech check", "Force check all mechanisms");
-        html += "</div>";
+        html += sectionCard("Mechanism Tools",
+            mini("Use Current Page", "!mech setpage", "Set UI page from current GM view") +
+            mini("Refresh", "!mech ui", "Refresh UI") +
+            mini("Check All", "!mech check", "Force check all mechanisms") +
+            '<div style="margin-top:8px;font-weight:900;color:#333;">Suggested multi-source name: <span style="font-family:monospace;">' + esc(suggested) + '</span></div>' +
+            '<div style="margin-top:8px;">' +
+            mini("Create Group", "!mech groupmake ?{Mechanism Name (no spaces)|" + esc(suggested) + "} ?{Required K (0=ALL)|0}", "Create or update a multi-source mechanism") +
+            mini("Add Sources", "!mech groupaddplates ?{Mechanism Name (no spaces)|" + esc(suggested) + "}", "Add selected triggers to a mechanism") +
+            mini("Add LOCK Doors", "!mech groupadddoors ?{Mechanism Name (no spaces)|" + esc(suggested) + "} lock", "Bind selected doors as LOCK effects") +
+            mini("Add SECRET Doors", "!mech groupadddoors ?{Mechanism Name (no spaces)|" + esc(suggested) + "} secret", "Bind selected doors as SECRET effects") +
+            '</div>',
+            true
+        );
 
-        // multi-source builder
-        html += '<div style="border:2px solid #111;border-radius:10px;padding:10px;margin-bottom:10px;background:#fafafa;">';
-        html += '<div style="font-weight:900;font-size:16px;margin-bottom:6px;">Multi-Source Builder</div>';
-        html += '<div style="color:#333;font-weight:900;margin-bottom:8px;">Suggested name: <span style="font-family:monospace;">' + esc(suggested) + "</span></div>";
-
-        html += mini("Create from selected triggers", "!mech groupmake ?{Mechanism Name (no spaces)|" + esc(suggested) + "} ?{Required K (0=ALL)|0}", "Create or update a multi-source mechanism");
-        html += mini("Add selected triggers", "!mech groupaddplates ?{Mechanism Name (no spaces)|" + esc(suggested) + "}", "Add selected triggers to an existing mechanism");
-        html += mini("Add selected LOCK doors", "!mech groupadddoors ?{Mechanism Name (no spaces)|" + esc(suggested) + "} lock", "Bind selected door(s) as LOCK effects");
-        html += mini("Add selected SECRET doors", "!mech groupadddoors ?{Mechanism Name (no spaces)|" + esc(suggested) + "} secret", "Bind selected door(s) as SECRET effects");
-        html += "</div>";
-
-        html += '<div style="border:2px solid #111;border-radius:10px;margin-bottom:12px;">';
-        html += '<div style="padding:8px 10px;border-bottom:2px solid #111;background:#f3f4f6;">';
-        html += '<span style="font-weight:900;font-size:18px;">Mechanisms</span>';
-        html += '<span style="color:#444;font-weight:900;margin-left:10px;">(single-source and multi-source)</span>';
-        html += "</div>";
+        var indexBody = "";
+        indexBody += '<div style="padding:8px 10px;border:2px solid #111;border-radius:10px;background:#f1efe8;font-size:11px;font-weight:900;text-transform:uppercase;letter-spacing:.04em;">';
+        indexBody += indexCell("22%", "Name");
+        indexBody += indexCell("14%", "Trigger");
+        indexBody += indexCell("24%", "Rule");
+        indexBody += indexCell("18%", "Effects");
+        indexBody += indexCell("10%", "State");
+        indexBody += indexCell("12%", "Actions");
+        indexBody += "</div>";
 
         if (!mechs.length) {
-            html += '<div style="padding:10px;color:#666;font-weight:900;">(No mechanisms on this page)</div>';
+            indexBody += '<div style="margin-top:10px;color:#666;font-weight:900;">(No mechanisms on this page)</div>';
         }
 
         for (var m = 0; m < mechs.length; m++) {
             var mech = mechs[m];
-            var active = mechanismIsActive(mech);
-            var required = mechanismRequiredCount(mech);
-            var pressed = countActiveMechanismSources(mech);
-            var trap = mech.effects.primary || defaultPrimaryEffectConfig();
-            var trapEnabled = trap.enabled && trap.type !== "none";
-            var overrideActive = mech.kind === "group" && hasMechanismEditOverride(mech.legacyId);
-            var editBlocked = mech.kind === "group" && mech.locks.configLocked && !overrideActive;
-            var lockText = mech.locks.mechanismLocked ? (mech.locks.freezeWhenLocked ? "FROZEN" : "LOCKED") : "UNLOCKED";
+            var mechActive = mechanismIsActive(mech);
+            var req = mechanismRequiredCount(mech);
+            var count = countActiveMechanismSources(mech);
+            var primary = mech.effects.primary || defaultPrimaryEffectConfig();
+            var stateText = "";
+            var triggerText = mech.kind === "single" ? sourceKindLabel(mech.sourceKind) : "Multi-source";
+            var rowActions = mini("Edit", "!mech edit " + mech.legacyId, "Edit mechanism");
 
-            var name = mechanismDisplayName(mech);
-            html += '<div style="border-top:2px solid #111;">';
-            html += '<div style="padding:8px 10px;border-bottom:2px solid #111;">';
-            html += '<span style="font-weight:900;font-size:18px;">' + esc(name) + "</span>" +
-                badge(active ? "ACTIVE" : "INACTIVE", active);
-            html += badge(mech.kind === "single" ? "SINGLE" : "MULTI", false);
-            if (trapEnabled) html += badge("EFFECT", false);
-            if (mech.kind === "group" && mech.locks.mechanismLocked) html += badge(lockText, false);
-            if (mech.kind === "group" && mech.locks.configLocked) html += badge("CONFIG", false);
-            if (overrideActive) html += badge("OVERRIDE", true);
-            if (mech.kind === "group" && mech.locks.autoLock) html += badge("AUTOLOCK", true);
-            html += "</div>";
-
-            html += '<div style="padding:8px 10px;">';
-            html += iconBtn("🛠️", "!mech edit " + mech.legacyId, "Edit mechanism");
             if (mech.kind === "single") {
-                html += iconBtn("🔍", "!mech ping " + mech.legacyId, "Ping trigger");
-                html += iconBtn("✅", "!mech checkplate " + mech.legacyId, "Check mechanism");
+                var singleMechState = singleMechanismState(mech);
+                stateText = sourceStateLabel(mech.sourceKind, singleMechState.active);
+                rowActions += mini("Ping", "!mech ping " + mech.legacyId, "Ping trigger");
+                rowActions += mini("Check", "!mech checkplate " + mech.legacyId, "Check mechanism");
             } else {
-                html += iconBtn("✅", "!mech groupcheck " + mech.legacyId, "Check mechanism");
+                stateText = String(count) + "/" + String(req);
+                rowActions += mini("Check", "!mech groupcheck " + mech.legacyId, "Check mechanism");
             }
+            rowActions += mini("Reset", "!mech reset " + mech.legacyId, "Reset runtime");
 
-            html += '<div style="margin-top:6px;font-weight:900;">rule: <span style="font-weight:900;color:#333;">' + esc(mechanismRuleSummary(mech)) + "</span></div>";
-            html += '<div style="margin-top:6px;font-weight:900;">effects: <span style="font-weight:900;color:#333;">' + esc(mechanismEffectSummary(mech)) + "</span></div>";
-            html += '<div style="margin-top:6px;font-weight:900;">sources: <span style="font-weight:900;color:#333;">' + esc(String(mech.sources.length)) + "</span></div>";
-            if (mech.kind === "single") {
-                html += '<div style="margin-top:6px;font-weight:900;">trigger: <span style="font-weight:900;color:#333;">' + esc(sourceKindLabel(mech.sourceKind)) + "</span></div>";
-            }
-
-            if (mech.kind === "group") {
-                html += '<div style="margin-top:6px;font-weight:900;">status: <span style="font-weight:900;color:#333;">' + esc(String(pressed)) + "/" + esc(String(required)) + " pressed</span></div>";
-                html += '<div style="margin-top:6px;font-weight:900;">locks: <span style="font-weight:900;color:#333;">' + esc(lockText) + (mech.locks.configLocked ? ", CONFIG" : "") + (mech.locks.autoLock ? ", AUTOLOCK" : "") + "</span></div>";
-            }
-
-            if (String(mech.messages.on || "").trim()) {
-                html += '<div style="margin-top:6px;color:#111;font-weight:900;">On: <span style="font-weight:700;">' + esc(mech.messages.on) + "</span></div>";
-            }
-            if (String(mech.messages.off || "").trim()) {
-                html += '<div style="margin-top:4px;color:#111;font-weight:900;">Off: <span style="font-weight:700;">' + esc(mech.messages.off) + "</span></div>";
-            }
-
-            html += '<div style="margin-top:10px;font-weight:900;">Sources</div>';
-            var anySourceListed = false;
-            for (var s = 0; s < mech.sources.length; s++) {
-                var srcId = mech.sources[s];
-                var srcMech = getSingleMechanism(srcId);
-                var src = getSourceObject(srcId, srcMech.sourceKind);
-                if (!src || sourcePageId(src, srcMech.sourceKind) !== pageId) continue;
-                anySourceListed = true;
-                var srcState = sourceMechanismStateById(srcId);
-                var srcName = sourceDisplayName(srcId, srcMech.sourceKind, src);
-                html += '<div style="margin-left:12px;margin-top:6px;font-weight:900;">' +
-                    esc(srcName) + ' <span style="color:#666;">(' + esc(sourceKindLabel(srcMech.sourceKind)) + ')</span>' +
-                    badge(srcState.active ? "ACTIVE" : "INACTIVE", srcState.active) +
-                    mini("Ping", "!mech ping " + srcId, "Ping this trigger");
-                if (mech.kind === "group") {
-                    if (editBlocked) html += miniDisabled("Remove", "Config locked");
-                    else html += mini("Remove", "!mech groupdelplate " + mech.legacyId + " " + srcId, "Remove this trigger from the mechanism");
-                }
-                html += "</div>";
-            }
-            if (!anySourceListed) {
-                html += '<div style="margin-left:12px;margin-top:6px;color:#666;font-weight:900;">(No sources on this page)</div>';
-            }
-
-            html += '<div style="margin-top:12px;font-weight:900;">Doors</div>';
-            var hasDoors = false;
-            for (var did3 in mech.effects.doors) {
-                if (!mech.effects.doors.hasOwnProperty(did3)) continue;
-                hasDoors = true;
-                var d3 = getObj("door", did3);
-                if (!d3) continue;
-
-                html += "<div style=\"margin-left:12px;margin-top:6px;font-weight:900;\">" +
-                    esc(String(mech.effects.doors[did3]).toUpperCase()) + " door …" + esc(shortId(did3)) +
-                    " <span style=\"color:#666;\">(" + esc(doorBits(d3)) + ")</span> ";
-
-                if (mech.kind === "group") {
-                    if (editBlocked) html += miniDisabled("Detach", "Config locked");
-                    else html += mini("Detach", "!mech groupdeldor " + mech.legacyId + " " + did3, "Detach this door from group");
-                }
-
-                html += "</div>";
-            }
-            if (!hasDoors) {
-                html += '<div style="margin-left:12px;margin-top:6px;color:#666;font-weight:900;">(No doors bound)</div>';
-            }
-
-            html += "</div></div>";
+            indexBody += '<div style="margin-top:8px;padding:10px;border:2px solid #111;border-radius:12px;background:#fff;">';
+            indexBody += indexCell("22%",
+                '<div style="font-weight:900;font-size:16px;">' + esc(mechanismDisplayName(mech)) + '</div>' +
+                '<div style="margin-top:4px;">' + badge(mechActive ? "ACTIVE" : "INACTIVE", mechActive) + badge(mech.kind === "single" ? "SINGLE" : "MULTI", false) + '</div>'
+            );
+            indexBody += indexCell("14%",
+                '<div style="font-weight:900;">' + esc(triggerText) + '</div>' +
+                (mech.kind === "single" ? '<div style="margin-top:4px;color:#666;font-weight:900;">' + esc(sourceDisplayName(mech.legacyId, mech.sourceKind, getSourceObject(mech.legacyId, mech.sourceKind))) + '</div>' : '<div style="margin-top:4px;color:#666;font-weight:900;">' + esc(String(mech.sources.length)) + ' sources</div>')
+            );
+            indexBody += indexCell("24%",
+                '<div style="font-weight:900;">' + esc(mechanismRuleSummary(mech)) + '</div>' +
+                (String(mech.messages.on || "").trim() ? '<div style="margin-top:4px;color:#666;font-weight:700;">On: ' + esc(mech.messages.on) + '</div>' : '')
+            );
+            indexBody += indexCell("18%",
+                '<div style="font-weight:900;">' + esc(mechanismEffectSummary(mech)) + '</div>' +
+                ((primary && primary.enabled && primary.type !== "none") ? '<div style="margin-top:4px;color:#666;font-weight:700;">' + esc(primaryEffectTypeLabel(primary.type)) + '</div>' : '<div style="margin-top:4px;color:#666;font-weight:700;">No primary effect</div>')
+            );
+            indexBody += indexCell("10%", '<div style="font-weight:900;">' + esc(stateText) + '</div>');
+            indexBody += indexCell("12%", '<div style="font-weight:900;">' + rowActions + '</div>');
+            indexBody += "</div>";
         }
 
-        html += "</div>";
-        html += "</div></div>"; // body + shell
+        html += sectionCard("Mechanism Index", indexBody, false);
+        html += "</div></div>";
 
         whisper(html);
     }
