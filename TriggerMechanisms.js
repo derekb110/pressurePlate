@@ -969,7 +969,7 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
             var markers = parseMarkerList(effect.status.markers);
             for (var i = 0; i < targets.length; i++) applyMarkersToToken(targets[i], markers);
             effect.status.lastTargets = [];
-            for (i = 0; i < targets.length; i++) effect.status.lastTargets.push(targets[i].id);
+            for (var j = 0; j < targets.length; j++) effect.status.lastTargets.push(targets[j].id);
             if (customMsg) postTriggerMessage(customMsg);
             maybeApplyLockEffect(source.id, effect, targets);
             return;
@@ -1149,7 +1149,7 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
                 applyDoorEffects(mech.effects.doors, true);
                 mech.runtime.lastConditionActive = true;
                 mech.runtime.lastOccupants = [];
-                for (i = 0; i < occupants.length; i++) mech.runtime.lastOccupants.push(occupants[i].id);
+                for (var i = 0; i < occupants.length; i++) mech.runtime.lastOccupants.push(occupants[i].id);
                 return;
             }
 
