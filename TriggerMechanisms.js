@@ -38,15 +38,16 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
 
     var DEBOUNCE_MS = 120;
     var OVERRIDE_MS = 60000; // 60s config override
-    var PRIMARY_EFFECT_TYPES = { none: true, alarm: true, damage: true, teleport: true, reveal: true, save: true, status: true, spawn: true };
+    var PRIMARY_EFFECT_TYPES = { none: true, alarm: true, damage: true, projectile: true, teleport: true, pit: true, reveal: true, save: true, status: true, spawn: true };
     var PRIMARY_EFFECT_TRIGGERS = { press: true, release: true, both: true };
-    var SOURCE_KINDS = { pressurePlate: true, tripwire: true, proximity: true, manual: true };
+    var SOURCE_KINDS = { pressurePlate: true, tripwire: true, proximity: true, manual: true, lever: true, button: true, doorState: true };
     var MOVE_LOCK_REENTRY = {};
 
     function defaultTriggerConfig(kind) {
         kind = String(kind || "pressurePlate");
         return {
-            proximityRange: kind === "proximity" ? 1 : 1
+            proximityRange: 1,
+            doorStateMode: kind === "doorState" ? "open" : "open"
         };
     }
 
@@ -55,6 +56,8 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         if (typeof cfg.proximityRange === "undefined") cfg.proximityRange = 1;
         cfg.proximityRange = parseFloat(cfg.proximityRange, 10);
         if (isNaN(cfg.proximityRange) || cfg.proximityRange < 0) cfg.proximityRange = 1;
+        if (typeof cfg.doorStateMode === "undefined") cfg.doorStateMode = "open";
+        if (!/^(open|closed|locked|unlocked|revealed|hidden)$/.test(cfg.doorStateMode)) cfg.doorStateMode = "open";
         return cfg;
     }
 
@@ -65,6 +68,10 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
             trigger: "press",
             message: "",
             damage: "1d6",
+            projectile: {
+                label: "Dart volley",
+                damageType: "piercing"
+            },
             save: {
                 label: "DEX",
                 dc: 12,
@@ -85,6 +92,14 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
                 top: 0,
                 name: ""
             },
+            pit: {
+                pageId: "",
+                left: 0,
+                top: 0,
+                name: "",
+                damage: "",
+                damageType: "bludgeoning"
+            },
             revealTargets: [],
             spawnTargets: [],
             effects: {
@@ -102,6 +117,10 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         if (!PRIMARY_EFFECT_TRIGGERS[effect.trigger]) effect.trigger = "press";
         if (typeof effect.message === "undefined") effect.message = "";
         if (typeof effect.damage === "undefined") effect.damage = "1d6";
+
+        effect.projectile = effect.projectile || {};
+        if (typeof effect.projectile.label === "undefined") effect.projectile.label = "Dart volley";
+        if (typeof effect.projectile.damageType === "undefined") effect.projectile.damageType = "piercing";
 
         effect.save = effect.save || {};
         if (typeof effect.save.label === "undefined") effect.save.label = "DEX";
@@ -122,6 +141,14 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         if (typeof effect.teleport.left === "undefined") effect.teleport.left = 0;
         if (typeof effect.teleport.top === "undefined") effect.teleport.top = 0;
         if (typeof effect.teleport.name === "undefined") effect.teleport.name = "";
+
+        effect.pit = effect.pit || {};
+        if (typeof effect.pit.pageId === "undefined") effect.pit.pageId = "";
+        if (typeof effect.pit.left === "undefined") effect.pit.left = 0;
+        if (typeof effect.pit.top === "undefined") effect.pit.top = 0;
+        if (typeof effect.pit.name === "undefined") effect.pit.name = "";
+        if (typeof effect.pit.damage === "undefined") effect.pit.damage = "";
+        if (typeof effect.pit.damageType === "undefined") effect.pit.damageType = "bludgeoning";
 
         if (!effect.revealTargets) effect.revealTargets = [];
         if (!effect.spawnTargets) effect.spawnTargets = [];
@@ -230,6 +257,8 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         for (var i = 0; i < sourceIds.length; i++) {
             var g = getObj("graphic", sourceIds[i]);
             if (g) return g.get("_pageid");
+            var d = getObj("door", sourceIds[i]);
+            if (d) return d.get("_pageid") || d.get("pageid") || "";
         }
         return "";
     }
@@ -248,6 +277,13 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         if (typeof mech.rule.mode === "undefined") mech.rule.mode = mech.kind === "single" ? "single" : "kofn";
         if (typeof mech.rule.k === "undefined") mech.rule.k = mech.kind === "single" ? 1 : mech.sources.length;
         if (typeof mech.rule.timing === "undefined") mech.rule.timing = "press";
+        if (typeof mech.rule.oneShot === "undefined") mech.rule.oneShot = false;
+        if (typeof mech.rule.cooldownMs === "undefined") mech.rule.cooldownMs = 0;
+        mech.rule.cooldownMs = parseInt(mech.rule.cooldownMs, 10);
+        if (isNaN(mech.rule.cooldownMs) || mech.rule.cooldownMs < 0) mech.rule.cooldownMs = 0;
+        if (typeof mech.rule.delayMs === "undefined") mech.rule.delayMs = 0;
+        mech.rule.delayMs = parseInt(mech.rule.delayMs, 10);
+        if (isNaN(mech.rule.delayMs) || mech.rule.delayMs < 0) mech.rule.delayMs = 0;
         mech.effects = mech.effects || {};
         if (!mech.effects.doors) mech.effects.doors = {};
         if (mech.effects.trap && !mech.effects.primary) mech.effects.primary = mech.effects.trap;
@@ -265,22 +301,40 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         if (typeof mech.locks.hasTriggered === "undefined") mech.locks.hasTriggered = false;
         mech.runtime = mech.runtime || {};
         if (typeof mech.runtime.lastActive === "undefined") mech.runtime.lastActive = false;
+        if (typeof mech.runtime.lastConditionActive === "undefined") mech.runtime.lastConditionActive = false;
         if (!mech.runtime.lastOccupants) mech.runtime.lastOccupants = [];
         if (typeof mech.runtime.manualActive === "undefined") mech.runtime.manualActive = false;
+        if (typeof mech.runtime.cooldownUntil === "undefined") mech.runtime.cooldownUntil = 0;
+        if (typeof mech.runtime.pendingToken === "undefined") mech.runtime.pendingToken = 0;
+        if (typeof mech.runtime.pendingUntil === "undefined") mech.runtime.pendingUntil = 0;
+        if (typeof mech.runtime.oneShotUsed === "undefined") mech.runtime.oneShotUsed = false;
         return mech;
     }
 
-    function getSingleMechanism(plateId) {
-        var mechId = singleMechanismId(plateId);
-        var plate = getObj("graphic", plateId);
+    function hasSingleMechanismRecord(sourceId) {
+        return !!ensureState().mechanisms[singleMechanismId(sourceId)];
+    }
+
+    function getSingleMechanism(sourceId) {
+        var mechId = singleMechanismId(sourceId);
         var mech = ensureMechanismData(mechId);
+        var source = null;
         backfillMechanismData(mech);
+        source = getSourceObject(sourceId, mech.sourceKind);
+        if (!source) {
+            source = getObj("graphic", sourceId);
+            if (source) mech.sourceKind = "pressurePlate";
+        }
+        if (!source) {
+            source = getObj("door", sourceId);
+            if (source) mech.sourceKind = "doorState";
+        }
         mech.kind = "single";
-        mech.legacyId = plateId;
+        mech.legacyId = sourceId;
         if (!SOURCE_KINDS[mech.sourceKind]) mech.sourceKind = "pressurePlate";
-        mech.name = (plate && plate.get("name")) || mech.name || ("Trigger …" + shortId(plateId));
-        mech.pageId = plate ? plate.get("_pageid") : mech.pageId;
-        mech.sources = [plateId];
+        mech.name = mech.name || sourceDisplayName(sourceId, mech.sourceKind, source);
+        mech.pageId = sourcePageId(source, mech.sourceKind) || mech.pageId;
+        mech.sources = [sourceId];
         mech.triggerConfig = backfillTriggerConfig(mech.sourceKind, mech.triggerConfig);
         mech.rule.mode = "single";
         mech.rule.k = 1;
@@ -313,7 +367,15 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
             if (!st.mechanisms.hasOwnProperty(mechId)) continue;
             backfillMechanismData(st.mechanisms[mechId]);
             if (st.mechanisms[mechId].kind === "single") {
-                if (!getObj("graphic", st.mechanisms[mechId].legacyId)) delete st.mechanisms[mechId];
+                var singleSourceId = st.mechanisms[mechId].legacyId;
+                var graphic = getObj("graphic", singleSourceId);
+                var door = getObj("door", singleSourceId);
+                if (!graphic && !door) {
+                    delete st.mechanisms[mechId];
+                    continue;
+                }
+                if (!graphic && door) st.mechanisms[mechId].sourceKind = "doorState";
+                st.mechanisms[mechId].pageId = inferMechanismPageId([singleSourceId]);
                 continue;
             }
             pruneMechanismSourcesAndDoors({
@@ -370,10 +432,55 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         }, 1200);
     }
 
+    function sourceObjectType(sourceKind) {
+        return sourceKind === "doorState" ? "door" : "graphic";
+    }
+
+    function isControlledSourceKind(sourceKind) {
+        return sourceKind === "manual" || sourceKind === "lever" || sourceKind === "button";
+    }
+
+    function getSourceObject(sourceId, sourceKind) {
+        return getObj(sourceObjectType(sourceKind), sourceId);
+    }
+
+    function sourcePageId(sourceObj, sourceKind) {
+        if (!sourceObj) return "";
+        if (sourceKind === "doorState") return sourceObj.get("_pageid") || sourceObj.get("pageid") || "";
+        return sourceObj.get("_pageid") || "";
+    }
+
+    function sourcePosition(sourceObj, sourceKind) {
+        var left;
+        var top;
+        if (!sourceObj) return null;
+        if (sourceKind === "doorState") {
+            left = sourceObj.get("x");
+            top = sourceObj.get("y");
+            if (typeof left !== "number") left = sourceObj.get("left");
+            if (typeof top !== "number") top = sourceObj.get("top");
+        } else {
+            left = sourceObj.get("left");
+            top = sourceObj.get("top");
+        }
+        if (typeof left !== "number" || typeof top !== "number") return null;
+        return { left: left, top: top, pageId: sourcePageId(sourceObj, sourceKind) };
+    }
+
+    function sourceDisplayName(sourceId, sourceKind, sourceObj) {
+        if (sourceKind === "doorState") return "Door …" + shortId(sourceId);
+        return (sourceObj && sourceObj.get("name")) || ("Trigger …" + shortId(sourceId));
+    }
+
     function cmdPingSource(playerid, sourceId) {
-        var p = getObj("graphic", sourceId);
-        if (!p) return whisper("Trigger not found.");
-        pingGraphic(p, playerid);
+        var graphic = getObj("graphic", sourceId);
+        var door = getObj("door", sourceId);
+        var pos;
+        if (graphic) return pingGraphic(graphic, playerid);
+        if (!door) return whisper("Trigger not found.");
+        pos = sourcePosition(door, "doorState");
+        if (!pos) return whisper("This door trigger cannot be pinged.");
+        sendPing(pos.left, pos.top, pos.pageId, playerid, true);
     }
 
     /* ---------- geometry ---------- */
@@ -446,27 +553,56 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         if (kind === "tripwire") return "Tripwire";
         if (kind === "proximity") return "Proximity";
         if (kind === "manual") return "Manual";
+        if (kind === "lever") return "Lever";
+        if (kind === "button") return "Button";
+        if (kind === "doorState") return "Door State";
         return "Pressure Plate";
     }
 
     function sourceStateLabel(kind, active) {
         if (kind === "manual") return active ? "ACTIVE" : "INACTIVE";
+        if (kind === "lever") return active ? "ON" : "OFF";
+        if (kind === "button") return active ? "PRESSED" : "RELEASED";
         if (kind === "tripwire") return active ? "CROSSED" : "CLEAR";
         if (kind === "proximity") return active ? "IN RANGE" : "CLEAR";
+        if (kind === "doorState") return active ? "MATCHED" : "UNMATCHED";
         return active ? "OCCUPIED" : "CLEAR";
     }
 
+    function doorStateModeLabel(mode) {
+        if (mode === "closed") return "Closed";
+        if (mode === "locked") return "Locked";
+        if (mode === "unlocked") return "Unlocked";
+        if (mode === "revealed") return "Revealed";
+        if (mode === "hidden") return "Hidden";
+        return "Open";
+    }
+
+    function doorStateMatches(door, mode) {
+        if (!door) return false;
+        if (mode === "closed") return !door.get("isOpen");
+        if (mode === "locked") return !!door.get("isLocked");
+        if (mode === "unlocked") return !door.get("isLocked");
+        if (mode === "revealed") return !door.get("isSecret");
+        if (mode === "hidden") return !!door.get("isSecret");
+        return !!door.get("isOpen");
+    }
+
     function singleMechanismState(mech) {
-        var source = getObj("graphic", mech.sources[0]);
+        var source = getSourceObject(mech.sources[0], mech.sourceKind);
         var targets = [];
         var active = false;
 
-        if (mech.sourceKind === "manual") {
+        if (isControlledSourceKind(mech.sourceKind)) {
             active = !!mech.runtime.manualActive;
             return { active: active, targets: [], source: source };
         }
         if (!source) return { active: false, targets: [], source: null };
 
+        if (mech.sourceKind === "doorState") {
+            active = doorStateMatches(source, mech.triggerConfig.doorStateMode);
+            return { active: active, targets: [], source: source };
+        }
         if (mech.sourceKind === "tripwire") targets = sourceIntersections(source);
         else if (mech.sourceKind === "proximity") targets = sourceNearbyTokens(source, mech.triggerConfig);
         else targets = sourceOccupants(source);
@@ -510,7 +646,9 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
     function primaryEffectTypeLabel(type) {
         if (type === "alarm") return "Alarm";
         if (type === "damage") return "Damage";
+        if (type === "projectile") return "Projectile";
         if (type === "teleport") return "Teleport";
+        if (type === "pit") return "Pit / Force Move";
         if (type === "reveal") return "Reveal";
         if (type === "save") return "Save";
         if (type === "status") return "Status";
@@ -523,6 +661,26 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         if (trigger === "release") return "Release";
         if (trigger === "both") return "Both";
         return "Press";
+    }
+
+    function durationSecondsLabel(ms) {
+        var seconds = (parseInt(ms, 10) || 0) / 1000;
+        var text = String(seconds);
+        if (Math.floor(seconds) === seconds) text = String(Math.floor(seconds));
+        return text + "s";
+    }
+
+    function cooldownRemainingMs(mech, now) {
+        now = now || Date.now();
+        return Math.max(0, (parseInt(mech.runtime.cooldownUntil, 10) || 0) - now);
+    }
+
+    function mechanismRuleExtras(mech) {
+        var out = [];
+        if (mech.rule.delayMs > 0) out.push("Delay " + durationSecondsLabel(mech.rule.delayMs));
+        if (mech.rule.cooldownMs > 0) out.push("Cooldown " + durationSecondsLabel(mech.rule.cooldownMs));
+        if (mech.rule.oneShot) out.push("One-Shot");
+        return out;
     }
 
     function joinTokenNames(tokens) {
@@ -730,6 +888,11 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         return parts.join(" ");
     }
 
+    function damageTypeSuffix(type) {
+        type = String(type || "").replace(/^\s+|\s+$/g, "");
+        return type ? " " + type : "";
+    }
+
     function executePrimaryEffect(source, effect, targets) {
         if (!source || !effect) return;
 
@@ -757,6 +920,13 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
             return;
         }
 
+        if (effect.type === "projectile") {
+            var projectileLabel = String(effect.projectile.label || "Projectile").replace(/^\s+|\s+$/g, "") || "Projectile";
+            postTriggerMessage((customMsg || projectileLabel + " fires") + ": " + targetNames + " take [[" + String(effect.damage || "1d6") + "]]" + damageTypeSuffix(effect.projectile.damageType) + " damage.");
+            maybeApplyLockEffect(source.id, effect, targets);
+            return;
+        }
+
         if (effect.type === "teleport") {
             if (!effect.teleport.pageId) return;
             if (!targets.length) return;
@@ -764,6 +934,20 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
             var moved = runTeleport(targets, effect.teleport);
             maybeApplyLockEffect(source.id, effect, targets);
             if (moved && customMsg) postTriggerMessage(customMsg);
+            return;
+        }
+
+        if (effect.type === "pit") {
+            var pitMoved = 0;
+            var pitMsg = customMsg || "The ground gives way";
+            if (targets.length && effect.pit.pageId) pitMoved = runTeleport(targets, effect.pit);
+            if (pitMoved || String(effect.pit.damage || "").trim()) {
+                var msg = pitMsg + ": " + targetNames;
+                if (pitMoved && effect.pit.pageId) msg += " are forced to " + (effect.pit.name || "the pit destination");
+                if (String(effect.pit.damage || "").trim()) msg += " and take [[" + String(effect.pit.damage).trim() + "]]" + damageTypeSuffix(effect.pit.damageType) + " damage";
+                postTriggerMessage(msg + ".");
+            }
+            maybeApplyLockEffect(source.id, effect, targets);
             return;
         }
 
@@ -817,6 +1001,129 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         }
     }
 
+    function clearPendingActivation(mech) {
+        mech.runtime.pendingToken = (parseInt(mech.runtime.pendingToken, 10) || 0) + 1;
+        mech.runtime.pendingUntil = 0;
+    }
+
+    function mechanismCanActivate(mech, now) {
+        now = now || Date.now();
+        if (mech.rule.oneShot && mech.runtime.oneShotUsed) return false;
+        return cooldownRemainingMs(mech, now) <= 0;
+    }
+
+    function consumeMechanismActivation(mech, now) {
+        now = now || Date.now();
+        if (mech.rule.cooldownMs > 0) mech.runtime.cooldownUntil = now + mech.rule.cooldownMs;
+        else mech.runtime.cooldownUntil = 0;
+        if (mech.rule.oneShot) mech.runtime.oneShotUsed = true;
+    }
+
+    function singleSourceFallback(mech) {
+        return { id: mech.legacyId, get: function () { return mech.name || ("Trigger …" + shortId(mech.legacyId)); } };
+    }
+
+    function clearSingleStatusOnRelease(mech, primary) {
+        if (!(primary && primary.type === "status" && primary.status.clearOnRelease && mech.rule.timing === "press")) return;
+        var clearMarkers = parseMarkerList(primary.status.markers);
+        var clearTargets = getGraphicsByIds(primary.status.lastTargets);
+        for (var i = 0; i < clearTargets.length; i++) removeMarkersFromToken(clearTargets[i], clearMarkers);
+        primary.status.lastTargets = [];
+    }
+
+    function activateSingleMechanism(mech, sourceState, now) {
+        var primary = getPrimaryEffect(mech);
+        var source = sourceState.source || singleSourceFallback(mech);
+        var occupants = sourceState.targets || [];
+        postTriggerMessage(mech.messages.on);
+        applyDoorEffects(mech.effects.doors, true);
+        if (primary && primaryEffectFiresOnEdge(mech.rule.timing, false, true)) {
+            executePrimaryEffect(source, primary, occupants);
+        }
+        mech.runtime.lastActive = true;
+        mech.runtime.lastOccupants = [];
+        for (var i = 0; i < occupants.length; i++) mech.runtime.lastOccupants.push(occupants[i].id);
+        consumeMechanismActivation(mech, now);
+    }
+
+    function releaseSingleMechanism(mech, sourceState) {
+        var primary = getPrimaryEffect(mech);
+        var source = (sourceState && sourceState.source) || singleSourceFallback(mech);
+        var prevOccupants = getGraphicsByIds(mech.runtime.lastOccupants);
+        postTriggerMessage(mech.messages.off);
+        applyDoorEffects(mech.effects.doors, false);
+        clearSingleStatusOnRelease(mech, primary);
+        if (primary && primaryEffectFiresOnEdge(mech.rule.timing, true, false)) {
+            executePrimaryEffect(source, primary, prevOccupants);
+        }
+        mech.runtime.lastActive = false;
+        mech.runtime.lastOccupants = [];
+    }
+
+    function activateMultiMechanism(mech, now) {
+        postTriggerMessage(mech.messages.on);
+        mech.runtime.lastActive = true;
+        if (!mech.locks.hasTriggered) mech.locks.hasTriggered = true;
+        applyDoorEffects(mech.effects.doors, true);
+        consumeMechanismActivation(mech, now);
+        if (mech.locks.autoLock) {
+            mech.locks.mechanismLocked = true;
+            mech.locks.freezeWhenLocked = true;
+            mech.runtime.lastActive = false;
+        }
+    }
+
+    function releaseMultiMechanism(mech) {
+        postTriggerMessage(mech.messages.off);
+        mech.runtime.lastActive = false;
+        applyDoorEffects(mech.effects.doors, false);
+    }
+
+    function scheduleMechanismActivation(mech) {
+        var delayMs = parseInt(mech.rule.delayMs, 10) || 0;
+        var token;
+        if (delayMs <= 0) return false;
+        token = (parseInt(mech.runtime.pendingToken, 10) || 0) + 1;
+        mech.runtime.pendingToken = token;
+        mech.runtime.pendingUntil = Date.now() + delayMs;
+
+        setTimeout(function () {
+            var delayed = ensureState().mechanisms[mech.id];
+            var sourceState;
+            var rawActive;
+            var pressed;
+            var required;
+            var now = Date.now();
+            if (!delayed) return;
+            backfillMechanismData(delayed);
+            if (delayed.runtime.pendingToken !== token) return;
+            delayed.runtime.pendingUntil = 0;
+            if (!mechanismCanActivate(delayed, now) || delayed.runtime.lastActive) return;
+
+            if (delayed.kind === "single") {
+                sourceState = singleMechanismState(delayed);
+                rawActive = sourceState.active;
+                if (!rawActive) return;
+                activateSingleMechanism(delayed, sourceState, now);
+                commitMechanism(delayed);
+                return;
+            }
+
+            if (delayed.locks.mechanismLocked) return;
+            pruneMechanismSourcesAndDoors({ plates: delayed.sources, doors: delayed.effects.doors });
+            delayed.pageId = inferMechanismPageId(delayed.sources);
+            pressed = countActiveMechanismSources(delayed);
+            required = mechanismRequiredCount(delayed);
+            if (required < 1) required = delayed.sources.length;
+            rawActive = delayed.sources.length > 0 && pressed >= required;
+            if (!rawActive) return;
+            activateMultiMechanism(delayed, now);
+            commitMechanism(delayed);
+        }, delayMs);
+
+        return true;
+    }
+
     function evaluateMechanism(mech) {
         if (!mech) return;
         backfillMechanismData(mech);
@@ -825,31 +1132,34 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
             var primary = getPrimaryEffect(mech);
             var sourceState = singleMechanismState(mech);
             var source = sourceState.source;
-            if (!source && mech.sourceKind !== "manual") return;
-            var occupants = sourceState.targets;
-            var prevOccupants = getGraphicsByIds(mech.runtime.lastOccupants);
+            var rawActive = sourceState.active;
+            var wasRawActive = !!mech.runtime.lastConditionActive;
             var wasActive = !!mech.runtime.lastActive;
-            var occ = sourceState.active;
-
-            if (occ && !wasActive) postTriggerMessage(mech.messages.on);
-            if (!occ && wasActive) postTriggerMessage(mech.messages.off);
-
-            applyDoorEffects(mech.effects.doors, occ);
-
-            if (!occ && wasActive && primary.type === "status" && primary.status.clearOnRelease && mech.rule.timing === "press") {
-                var clearMarkers = parseMarkerList(primary.status.markers);
-                var clearTargets = getGraphicsByIds(primary.status.lastTargets);
-                for (var i = 0; i < clearTargets.length; i++) removeMarkersFromToken(clearTargets[i], clearMarkers);
-                primary.status.lastTargets = [];
+            var now = Date.now();
+            if (!source && !isControlledSourceKind(mech.sourceKind)) return;
+            var occupants = sourceState.targets;
+            if (!rawActive) {
+                clearPendingActivation(mech);
+                if (wasActive) releaseSingleMechanism(mech, sourceState);
+                mech.runtime.lastConditionActive = false;
+                return;
             }
 
-            if (primary && primaryEffectFiresOnEdge(mech.rule.timing, wasActive, occ)) {
-                executePrimaryEffect(source || { id: mech.legacyId, get: function () { return mech.name; } }, primary, occ ? occupants : prevOccupants);
+            if (wasActive) {
+                applyDoorEffects(mech.effects.doors, true);
+                mech.runtime.lastConditionActive = true;
+                mech.runtime.lastOccupants = [];
+                for (i = 0; i < occupants.length; i++) mech.runtime.lastOccupants.push(occupants[i].id);
+                return;
             }
 
-            mech.runtime.lastActive = occ;
-            mech.runtime.lastOccupants = [];
-            for (i = 0; i < occupants.length; i++) mech.runtime.lastOccupants.push(occupants[i].id);
+            if (!wasRawActive && mechanismCanActivate(mech, now)) {
+                if (!scheduleMechanismActivation(mech)) {
+                    activateSingleMechanism(mech, sourceState, now);
+                }
+            }
+
+            mech.runtime.lastConditionActive = true;
             return;
         }
 
@@ -861,6 +1171,8 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         mech.pageId = inferMechanismPageId(mech.sources);
 
         if (mech.locks.mechanismLocked) {
+            clearPendingActivation(mech);
+            mech.runtime.lastConditionActive = false;
             mech.runtime.lastActive = false;
             if (!mech.locks.freezeWhenLocked) applyDoorEffects(mech.effects.doors, false);
             return;
@@ -870,22 +1182,30 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         var required = mech.rule.mode === "all" ? mech.sources.length : mech.rule.k;
         if (required < 1) required = mech.sources.length;
         var active = mech.sources.length > 0 && pressed >= required;
+        var wasGroupRawActive = !!mech.runtime.lastConditionActive;
+        var wasGroupActive = !!mech.runtime.lastActive;
+        var groupNow = Date.now();
 
-        if (active && !mech.runtime.lastActive) postTriggerMessage(mech.messages.on);
-        if (!active && mech.runtime.lastActive) postTriggerMessage(mech.messages.off);
-        mech.runtime.lastActive = active;
-
-        if (active && !mech.locks.hasTriggered) {
-            mech.locks.hasTriggered = true;
-            applyDoorEffects(mech.effects.doors, true);
-            if (mech.locks.autoLock) {
-                mech.locks.mechanismLocked = true;
-                mech.locks.freezeWhenLocked = true;
-            }
+        if (!active) {
+            clearPendingActivation(mech);
+            if (wasGroupActive) releaseMultiMechanism(mech);
+            mech.runtime.lastConditionActive = false;
             return;
         }
 
-        applyDoorEffects(mech.effects.doors, active);
+        if (wasGroupActive) {
+            applyDoorEffects(mech.effects.doors, true);
+            mech.runtime.lastConditionActive = true;
+            return;
+        }
+
+        if (!wasGroupRawActive && mechanismCanActivate(mech, groupNow)) {
+            if (!scheduleMechanismActivation(mech)) {
+                activateMultiMechanism(mech, groupNow);
+            }
+        }
+
+        mech.runtime.lastConditionActive = true;
     }
 
     function evaluateSingleMechanism(plateId) {
@@ -897,7 +1217,7 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         // plates
         var cleanedPlates = [];
         for (var i = 0; i < g.plates.length; i++) {
-            if (getObj("graphic", g.plates[i])) cleanedPlates.push(g.plates[i]);
+            if (getObj("graphic", g.plates[i]) || getObj("door", g.plates[i])) cleanedPlates.push(g.plates[i]);
         }
         g.plates = cleanedPlates;
 
@@ -1056,6 +1376,16 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         return commitMechanism(mech);
     }
 
+    function updateMechanismByRef(ref, mutator) {
+        var mech = resolveMechanismRef(ref);
+        if (!mech) return null;
+        if (mech.kind === "group") {
+            if (!requireMechanismConfigEditable(mech.legacyId)) return void 0;
+            return updateGroupMechanism(mech.legacyId, false, mutator);
+        }
+        return updateSingleMechanism(mech.legacyId, mutator);
+    }
+
     function mechanismAddSource(mech, sourceId) {
         for (var i = 0; i < mech.sources.length; i++) {
             if (mech.sources[i] === sourceId) return false;
@@ -1095,6 +1425,11 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
     function describeTeleportDestination(trap) {
         if (!trap || !trap.teleport || !trap.teleport.pageId) return "(not set)";
         return (trap.teleport.name || "Destination") + " @ …" + shortId(trap.teleport.pageId);
+    }
+
+    function describePitDestination(trap) {
+        if (!trap || !trap.pit || !trap.pit.pageId) return "(not set)";
+        return (trap.pit.name || "Pit") + " @ …" + shortId(trap.pit.pageId);
     }
 
     function describeRevealTargets(trap) {
@@ -1146,7 +1481,7 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         if (!SOURCE_KINDS[sourceKind]) sourceKind = "pressurePlate";
 
         if (!sel.length) {
-            whisper("Select one or more tokens, then run <code>!mech make</code>.");
+            whisper("Select one or more trigger tokens or door objects, then run <code>!mech make</code>.");
             return;
         }
 
@@ -1159,14 +1494,30 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
             var o = getObj(sel[i]._type, sel[i]._id);
             if (!o) continue;
 
-            if (o.get("_type") === "graphic" && o.get("_subtype") === "token") {
+            if (sourceKind === "doorState" && o.get("_type") === "door") {
                 made++;
-                o.set({ layer: "gmlayer" });
-
                 var newName = base;
                 if (sel.length > 1) newName = base + "_" + made;
 
-                o.set({ name: newName });
+                getSingleMechanism(o.id);
+                updateSingleMechanism(o.id, function (mech) {
+                    mech.name = newName;
+                    mech.sourceKind = "doorState";
+                    mech.pageId = sourcePageId(o, "doorState") || mech.pageId;
+                    mech.triggerConfig = backfillTriggerConfig("doorState", mech.triggerConfig);
+                    mech.runtime.manualActive = false;
+                });
+                continue;
+            }
+
+            if (sourceKind !== "doorState" && o.get("_type") === "graphic" && o.get("_subtype") === "token") {
+                made++;
+                o.set({ layer: "gmlayer" });
+
+                var newGraphicName = base;
+                if (sel.length > 1) newGraphicName = base + "_" + made;
+
+                o.set({ name: newGraphicName });
 
                 getSingleMechanism(o.id);
                 updateSingleMechanism(o.id, function (mech) {
@@ -1177,6 +1528,12 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
             }
         }
 
+        if (!made) {
+            if (sourceKind === "doorState") whisper("Select one or more Door Tool door objects to create a door-state trigger.");
+            else whisper("Select one or more token graphics to create this trigger type.");
+            return;
+        }
+
         setUIPage(msg.playerid);
         evaluateAll();
         renderUI(msg.playerid);
@@ -1185,13 +1542,21 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
     function cmdSetSingleSourceKind(sourceId, sourceKind) {
         sourceKind = String(sourceKind || "").replace(/^\s+|\s+$/g, "");
         if (!SOURCE_KINDS[sourceKind]) {
-            whisper("Source type must be <code>pressurePlate</code>, <code>tripwire</code>, <code>proximity</code>, or <code>manual</code>.");
+            whisper("Source type must be <code>pressurePlate</code>, <code>tripwire</code>, <code>proximity</code>, <code>manual</code>, <code>lever</code>, <code>button</code>, or <code>doorState</code>.");
+            return;
+        }
+        if (sourceKind === "doorState" && !getObj("door", sourceId)) {
+            whisper("Door-state triggers require a real Roll20 Door Tool door object.");
+            return;
+        }
+        if (sourceKind !== "doorState" && !getObj("graphic", sourceId)) {
+            whisper("This trigger is backed by a door object, so it can only use <code>doorState</code>.");
             return;
         }
         updateSingleMechanism(sourceId, function (mech) {
             mech.sourceKind = sourceKind;
             mech.triggerConfig = backfillTriggerConfig(sourceKind, mech.triggerConfig);
-            if (sourceKind !== "manual") mech.runtime.manualActive = false;
+            if (!isControlledSourceKind(sourceKind)) mech.runtime.manualActive = false;
         });
         whisper("Trigger …" + esc(shortId(sourceId)) + " source type set to <b>" + esc(sourceKindLabel(sourceKind).toUpperCase()) + "</b>.");
     }
@@ -1206,22 +1571,125 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         whisper("Trigger …" + esc(shortId(sourceId)) + " proximity range set to <b>" + esc(String(range)) + "</b> cell(s).");
     }
 
-    function cmdSetManualState(sourceId, active) {
+    function cmdSetControlledState(sourceId, active, forcedKind) {
         var mech = updateSingleMechanism(sourceId, function (mech) {
-            mech.sourceKind = "manual";
+            if (forcedKind) mech.sourceKind = forcedKind;
+            else if (!isControlledSourceKind(mech.sourceKind)) mech.sourceKind = "manual";
             mech.runtime.manualActive = active;
         });
         evaluateSingleMechanism(sourceId);
-        whisper("Trigger …" + esc(shortId(sourceId)) + " manual state is now " + (mech.runtime.manualActive ? "<b>ACTIVE</b>" : "<b>INACTIVE</b>") + ".");
+        whisper("Trigger …" + esc(shortId(sourceId)) + " " + esc(sourceKindLabel(mech.sourceKind).toLowerCase()) + " state is now <b>" + esc(sourceStateLabel(mech.sourceKind, mech.runtime.manualActive)) + "</b>.");
     }
 
-    function cmdToggleManualState(sourceId) {
+    function cmdToggleControlledState(sourceId, forcedKind) {
         var mech = updateSingleMechanism(sourceId, function (mech) {
-            mech.sourceKind = "manual";
+            if (forcedKind) mech.sourceKind = forcedKind;
+            else if (!isControlledSourceKind(mech.sourceKind)) mech.sourceKind = "manual";
             mech.runtime.manualActive = !mech.runtime.manualActive;
         });
         evaluateSingleMechanism(sourceId);
-        whisper("Trigger …" + esc(shortId(sourceId)) + " manual state is now " + (mech.runtime.manualActive ? "<b>ACTIVE</b>" : "<b>INACTIVE</b>") + ".");
+        whisper("Trigger …" + esc(shortId(sourceId)) + " " + esc(sourceKindLabel(mech.sourceKind).toLowerCase()) + " state is now <b>" + esc(sourceStateLabel(mech.sourceKind, mech.runtime.manualActive)) + "</b>.");
+    }
+
+    function cmdSetManualState(sourceId, active) {
+        cmdSetControlledState(sourceId, active, "manual");
+    }
+
+    function cmdToggleManualState(sourceId) {
+        cmdToggleControlledState(sourceId, "manual");
+    }
+
+    function cmdSetLeverState(sourceId, active) {
+        cmdSetControlledState(sourceId, active, "lever");
+    }
+
+    function cmdToggleLeverState(sourceId) {
+        cmdToggleControlledState(sourceId, "lever");
+    }
+
+    function cmdSetButtonState(sourceId, active) {
+        cmdSetControlledState(sourceId, active, "button");
+    }
+
+    function cmdToggleButtonState(sourceId) {
+        cmdToggleControlledState(sourceId, "button");
+    }
+
+    function cmdSetDoorStateMode(sourceId, mode) {
+        mode = String(mode || "").toLowerCase();
+        if (!/^(open|closed|locked|unlocked|revealed|hidden)$/.test(mode)) {
+            whisper("Door mode must be <code>open</code>, <code>closed</code>, <code>locked</code>, <code>unlocked</code>, <code>revealed</code>, or <code>hidden</code>.");
+            return;
+        }
+        if (!getObj("door", sourceId)) {
+            whisper("Door-state triggers require a real Roll20 Door Tool door object.");
+            return;
+        }
+        updateSingleMechanism(sourceId, function (mech) {
+            mech.sourceKind = "doorState";
+            mech.triggerConfig = backfillTriggerConfig("doorState", mech.triggerConfig);
+            mech.triggerConfig.doorStateMode = mode;
+            mech.runtime.manualActive = false;
+        });
+        whisper("Trigger …" + esc(shortId(sourceId)) + " now watches for door state <b>" + esc(doorStateModeLabel(mode).toUpperCase()) + "</b>.");
+    }
+
+    function cmdSetMechanismDelay(ref, seconds) {
+        var delayMs = Math.round(Math.max(0, parseFloat(seconds, 10) || 0) * 1000);
+        var mech = updateMechanismByRef(ref, function (mech) {
+            mech.rule.delayMs = delayMs;
+            if (delayMs <= 0) clearPendingActivation(mech);
+        });
+        if (typeof mech === "undefined") return;
+        if (!mech) return whisper("Mechanism not found.");
+        whisper("Mechanism <b>" + esc(mechanismDisplayName(mech)) + "</b> delay set to <b>" + esc(durationSecondsLabel(delayMs)) + "</b>.");
+    }
+
+    function cmdSetMechanismCooldown(ref, seconds) {
+        var cooldownMs = Math.round(Math.max(0, parseFloat(seconds, 10) || 0) * 1000);
+        var mech = updateMechanismByRef(ref, function (mech) {
+            mech.rule.cooldownMs = cooldownMs;
+            if (cooldownMs <= 0) mech.runtime.cooldownUntil = 0;
+        });
+        if (typeof mech === "undefined") return;
+        if (!mech) return whisper("Mechanism not found.");
+        whisper("Mechanism <b>" + esc(mechanismDisplayName(mech)) + "</b> cooldown set to <b>" + esc(durationSecondsLabel(cooldownMs)) + "</b>.");
+    }
+
+    function cmdSetMechanismOneShot(ref, value) {
+        value = String(value || "").toLowerCase();
+        if (value !== "on" && value !== "off") {
+            whisper("One-shot must be <code>on</code> or <code>off</code>.");
+            return;
+        }
+        var mech = updateMechanismByRef(ref, function (mech) {
+            mech.rule.oneShot = value === "on";
+            if (!mech.rule.oneShot) mech.runtime.oneShotUsed = false;
+        });
+        if (typeof mech === "undefined") return;
+        if (!mech) return whisper("Mechanism not found.");
+        whisper("Mechanism <b>" + esc(mechanismDisplayName(mech)) + "</b> one-shot mode is now " + (mech.rule.oneShot ? "<b>ON</b>" : "<b>OFF</b>") + ".");
+    }
+
+    function cmdResetMechanismRuntime(ref) {
+        var mech = updateMechanismByRef(ref, function (mech) {
+            clearPendingActivation(mech);
+            mech.runtime.lastActive = false;
+            mech.runtime.lastConditionActive = false;
+            mech.runtime.lastOccupants = [];
+            mech.runtime.cooldownUntil = 0;
+            mech.runtime.oneShotUsed = false;
+            if (mech.kind === "group") {
+                mech.locks.hasTriggered = false;
+                if (mech.locks.mechanismLocked && mech.locks.freezeWhenLocked) {
+                    mech.locks.mechanismLocked = false;
+                    mech.locks.freezeWhenLocked = false;
+                }
+            }
+        });
+        if (typeof mech === "undefined") return;
+        if (!mech) return whisper("Mechanism not found.");
+        whisper("Mechanism <b>" + esc(mechanismDisplayName(mech)) + "</b> runtime state has been reset.");
     }
 
     function cmdAddSingle(msg, mode) {
@@ -1232,24 +1700,39 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         }
 
         var sel = msg.selected || [];
-        var plate = null;
+        var sourceId = "";
         var doors = [];
 
         for (var i = 0; i < sel.length; i++) {
             var o = getObj(sel[i]._type, sel[i]._id);
             if (!o) continue;
-            if (o.get("_type") === "graphic" && o.get("_subtype") === "token" && o.get("layer") === "gmlayer") plate = o;
+            if (!sourceId && o.get("_type") === "graphic" && o.get("_subtype") === "token" && o.get("layer") === "gmlayer") {
+                sourceId = o.id;
+                continue;
+            }
+            if (!sourceId && o.get("_type") === "door" && hasSingleMechanismRecord(o.id) && getSingleMechanism(o.id).sourceKind === "doorState") {
+                sourceId = o.id;
+                continue;
+            }
             if (o.get("_type") === "door") doors.push(o);
         }
 
-        if (!plate) { whisper("Select a plate token (GM layer) and one or more Door objects."); return; }
+        if (sourceId) {
+            var filteredDoors = [];
+            for (var d0 = 0; d0 < doors.length; d0++) {
+                if (doors[d0].id !== sourceId) filteredDoors.push(doors[d0]);
+            }
+            doors = filteredDoors;
+        }
+
+        if (!sourceId) { whisper("Select a trigger source (GM-layer token or an existing door-state trigger) and one or more Door objects."); return; }
         if (!doors.length) { whisper("No Door objects selected (must be Door tool doors)."); return; }
 
-        updateSingleMechanism(plate.id, function (mech) {
+        updateSingleMechanism(sourceId, function (mech) {
             for (var d = 0; d < doors.length; d++) mechanismAddDoor(mech, doors[d].id, mode);
         });
 
-        evaluateSingleMechanism(plate.id);
+        evaluateSingleMechanism(sourceId);
         renderUI(msg.playerid);
     }
 
@@ -1313,7 +1796,7 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         type = String(type || "").toLowerCase();
 
         if (!PRIMARY_EFFECT_TYPES[type]) {
-            whisper("Primary effect must be one of: <code>alarm</code>, <code>damage</code>, <code>teleport</code>, <code>reveal</code>, <code>save</code>, <code>status</code>, <code>spawn</code>, <code>none</code>.");
+            whisper("Primary effect must be one of: <code>alarm</code>, <code>damage</code>, <code>projectile</code>, <code>teleport</code>, <code>pit</code>, <code>reveal</code>, <code>save</code>, <code>status</code>, <code>spawn</code>, <code>none</code>.");
             return;
         }
 
@@ -1352,6 +1835,20 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
             getPrimaryEffect(mech).damage = String(dmgExpr || "").trim() || "1d6";
         });
         whisper("Trigger …" + esc(shortId(plateId)) + " damage roll set to <b>" + esc(mech.effects.primary.damage) + "</b>.");
+    }
+
+    function cmdEffectProjectileLabel(plateId, label) {
+        var mech = updateSingleMechanism(plateId, function (mech) {
+            getPrimaryEffect(mech).projectile.label = String(label || "").replace(/^\s+|\s+$/g, "") || "Dart volley";
+        });
+        whisper("Trigger …" + esc(shortId(plateId)) + " projectile label set to <b>" + esc(mech.effects.primary.projectile.label) + "</b>.");
+    }
+
+    function cmdEffectProjectileDamageType(plateId, dmgType) {
+        var mech = updateSingleMechanism(plateId, function (mech) {
+            getPrimaryEffect(mech).projectile.damageType = String(dmgType || "").replace(/^\s+|\s+$/g, "");
+        });
+        whisper("Trigger …" + esc(shortId(plateId)) + " projectile damage type set.");
     }
 
     function cmdEffectSaveLabel(plateId, label) {
@@ -1523,6 +2020,61 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         whisper("Spawn targets cleared for trigger …" + esc(shortId(plateId)) + ".");
     }
 
+    function cmdEffectSetPitDestination(msg, plateId) {
+        var sel = msg.selected || [];
+        var marker = null;
+
+        for (var i = 0; i < sel.length; i++) {
+            var o = getObj(sel[i]._type, sel[i]._id);
+            if (!o) continue;
+            if (o.get("_type") === "graphic" && o.id !== plateId) {
+                marker = o;
+                break;
+            }
+        }
+
+        if (!marker) {
+            whisper("Select one destination token/graphic, then run <code>!mech effectsetpit " + esc(plateId) + "</code>.");
+            return;
+        }
+
+        updateSingleMechanism(plateId, function (mech) {
+            getPrimaryEffect(mech).pit = {
+                pageId: marker.get("_pageid"),
+                left: marker.get("left"),
+                top: marker.get("top"),
+                name: marker.get("name") || ("Pit …" + shortId(marker.id)),
+                damage: getPrimaryEffect(mech).pit.damage || "",
+                damageType: getPrimaryEffect(mech).pit.damageType || "bludgeoning"
+            };
+        });
+        whisper("Pit / force-move destination saved for trigger …" + esc(shortId(plateId)) + ".");
+    }
+
+    function cmdEffectClearPitDestination(plateId) {
+        updateSingleMechanism(plateId, function (mech) {
+            getPrimaryEffect(mech).pit.pageId = "";
+            getPrimaryEffect(mech).pit.left = 0;
+            getPrimaryEffect(mech).pit.top = 0;
+            getPrimaryEffect(mech).pit.name = "";
+        });
+        whisper("Pit / force-move destination cleared for trigger …" + esc(shortId(plateId)) + ".");
+    }
+
+    function cmdEffectPitDamage(plateId, dmgExpr) {
+        var mech = updateSingleMechanism(plateId, function (mech) {
+            getPrimaryEffect(mech).pit.damage = String(dmgExpr || "").replace(/^\s+|\s+$/g, "");
+        });
+        whisper("Trigger …" + esc(shortId(plateId)) + " pit damage set to <b>" + esc(String(mech.effects.primary.pit.damage || "").trim() || "(none)") + "</b>.");
+    }
+
+    function cmdEffectPitDamageType(plateId, dmgType) {
+        updateSingleMechanism(plateId, function (mech) {
+            getPrimaryEffect(mech).pit.damageType = String(dmgType || "").replace(/^\s+|\s+$/g, "");
+        });
+        whisper("Trigger …" + esc(shortId(plateId)) + " pit damage type set.");
+    }
+
     function cmdEffectLockToggle(plateId) {
         var mech = updateSingleMechanism(plateId, function (mech) {
             var primary = getPrimaryEffect(mech);
@@ -1559,6 +2111,7 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         var st = ensureState();
         if (st.mechanisms[ref]) return st.mechanisms[ref];
         if (getObj("graphic", ref)) return getSingleMechanism(ref);
+        if (getObj("door", ref)) return getSingleMechanism(ref);
         return getMultiMechanism(ref, false);
     }
 
@@ -1575,13 +2128,14 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         var isSingle = mech.kind === "single";
         var trap = isSingle ? getPrimaryEffect(mech) : null;
         var sourceId = isSingle ? mech.legacyId : "";
-        var sourceObj = isSingle ? getObj("graphic", sourceId) : null;
+        var sourceObj = isSingle ? getSourceObject(sourceId, mech.sourceKind) : null;
         var singleState = isSingle ? singleMechanismState(mech) : null;
         var active = mechanismIsActive(mech);
         var required = mechanismRequiredCount(mech);
         var pressed = countActiveMechanismSources(mech);
         var overrideActive = (!isSingle) && hasMechanismEditOverride(mech.legacyId);
         var editBlocked = (!isSingle) && mech.locks.configLocked && !overrideActive;
+        var cooldownLeft = cooldownRemainingMs(mech);
         var html = "";
 
         html += "<div style=\"border:2px solid #111;border-radius:12px;overflow:hidden;max-width:760px;font-family:Arial,sans-serif;\">";
@@ -1615,19 +2169,24 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         }
         if (isSingle) {
             html += iconBtn("💣", "!mech effecttoggle " + sourceId, (trap.enabled && trap.type !== "none") ? "Disable primary effect" : "Enable primary effect");
+            html += iconBtn("🔁", "!mech reset " + sourceId, "Reset mechanism runtime");
         } else {
             html += iconBtn(mech.locks.mechanismLocked ? "🔒" : "🔓", "!mech grouplock " + mech.legacyId, "Toggle mechanism lock");
             html += iconBtn(mech.locks.configLocked ? "🧱" : "✏️", "!mech groupcfglock " + mech.legacyId, "Toggle config lock");
             html += iconBtn(mech.locks.autoLock ? "⭐" : "☆", "!mech groupautolock " + mech.legacyId, "Toggle auto-lock after first trigger");
-            html += iconBtn("🔁", "!mech groupreset " + mech.legacyId, "Reset trigger state");
+            html += iconBtn("🔁", "!mech reset " + mech.legacyId, "Reset mechanism runtime");
         }
         html += "</div>";
         if (isSingle) {
             html += "<div style=\"margin-top:8px;font-weight:900;\">Source type: <span style=\"color:#333;\">" + esc(sourceKindLabel(mech.sourceKind)) + "</span></div>";
             html += "<div style=\"margin-top:4px;font-weight:900;\">State: <span style=\"color:#333;\">" + esc(sourceStateLabel(mech.sourceKind, singleState.active)) + "</span></div>";
+            html += "<div style=\"margin-top:4px;font-weight:900;\">Source: <span style=\"color:#333;\">" + esc(sourceDisplayName(sourceId, mech.sourceKind, sourceObj)) + "</span></div>";
         } else if (!isSingle) {
             html += "<div style=\"margin-top:8px;font-weight:900;\">Pressed: <span style=\"color:#333;\">" + esc(String(pressed)) + "/" + esc(String(required)) + "</span></div>";
         }
+        if (mech.rule.oneShot) html += "<div style=\"margin-top:4px;font-weight:900;\">One-shot used: <span style=\"color:#333;\">" + esc(mech.runtime.oneShotUsed ? "YES" : "NO") + "</span></div>";
+        if (cooldownLeft > 0) html += "<div style=\"margin-top:4px;font-weight:900;\">Cooldown: <span style=\"color:#333;\">" + esc(durationSecondsLabel(cooldownLeft)) + " remaining</span></div>";
+        if (mech.runtime.pendingUntil > Date.now()) html += "<div style=\"margin-top:4px;font-weight:900;\">Pending: <span style=\"color:#333;\">Activates in " + esc(durationSecondsLabel(mech.runtime.pendingUntil - Date.now())) + "</span></div>";
         html += "</div>";
 
         if (!isSingle) {
@@ -1673,16 +2232,37 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
             html += mini("Require ALL", "!mech groupsetall " + mech.legacyId, "Require all sources");
             html += mini("Set K", "!mech groupsetk " + mech.legacyId + " ?{Require how many sources?|2}", "Set K-of-N");
         }
+        if (!editBlocked || isSingle) {
+            html += mini("Set delay", "!mech ruledelay " + (isSingle ? sourceId : mech.legacyId) + " ?{Delay in seconds|0}", "Delay activation");
+            html += mini("Set cooldown", "!mech rulecooldown " + (isSingle ? sourceId : mech.legacyId) + " ?{Cooldown in seconds|0}", "Cooldown after activation");
+            html += mini(mech.rule.oneShot ? "One-shot OFF" : "One-shot ON", "!mech ruleoneshot " + (isSingle ? sourceId : mech.legacyId) + " " + (mech.rule.oneShot ? "off" : "on"), "Toggle one-shot");
+            html += mini("Reset", "!mech reset " + (isSingle ? sourceId : mech.legacyId), "Reset one-shot, cooldown, and pending state");
+        } else {
+            html += miniDisabled("Set delay", "Config locked");
+            html += miniDisabled("Set cooldown", "Config locked");
+            html += miniDisabled("One-shot", "Config locked");
+            html += miniDisabled("Reset", "Config locked");
+        }
         html += '<div style="margin-top:8px;font-weight:900;">Current: <span style="color:#333;">' + esc(mechanismRuleSummary(mech)) + "</span></div>";
+        html += '<div style="margin-top:4px;font-weight:900;">Delay: <span style="color:#333;">' + esc(durationSecondsLabel(mech.rule.delayMs)) + "</span></div>";
+        html += '<div style="margin-top:4px;font-weight:900;">Cooldown: <span style="color:#333;">' + esc(durationSecondsLabel(mech.rule.cooldownMs)) + "</span></div>";
+        html += '<div style="margin-top:4px;font-weight:900;">One-shot: <span style="color:#333;">' + esc(mech.rule.oneShot ? "ON" : "OFF") + "</span></div>";
         html += "</div>";
 
         if (isSingle) {
             html += '<div style="border:2px solid #111;border-radius:10px;padding:10px;margin-bottom:10px;background:#fafafa;">';
             html += '<div style="font-weight:900;font-size:16px;margin-bottom:6px;">Trigger Type</div>';
-            html += mini("Pressure Plate", "!mech sourcetype " + sourceId + " pressurePlate", "Require full occupancy");
-            html += mini("Tripwire", "!mech sourcetype " + sourceId + " tripwire", "Trigger on any overlap");
-            html += mini("Proximity", "!mech sourcetype " + sourceId + " proximity", "Trigger when tokens enter a radius");
-            html += mini("Manual", "!mech sourcetype " + sourceId + " manual", "GM-controlled trigger state");
+            if (getObj("graphic", sourceId)) {
+                html += mini("Pressure Plate", "!mech sourcetype " + sourceId + " pressurePlate", "Require full occupancy");
+                html += mini("Tripwire", "!mech sourcetype " + sourceId + " tripwire", "Trigger on any overlap");
+                html += mini("Proximity", "!mech sourcetype " + sourceId + " proximity", "Trigger when tokens enter a radius");
+                html += mini("Manual", "!mech sourcetype " + sourceId + " manual", "GM-controlled trigger state");
+                html += mini("Lever", "!mech sourcetype " + sourceId + " lever", "GM-controlled lever state");
+                html += mini("Button", "!mech sourcetype " + sourceId + " button", "GM-controlled button state");
+            }
+            if (getObj("door", sourceId)) {
+                html += mini("Door State", "!mech sourcetype " + sourceId + " doorState", "Fire when the Door Tool object matches a state");
+            }
             html += '<div style="margin-top:8px;font-weight:900;">Current: <span style="color:#333;">' + esc(sourceKindLabel(mech.sourceKind)) + "</span></div>";
             if (mech.sourceKind === "proximity") {
                 html += mini("Set range", "!mech proximityrange " + sourceId + " ?{Range in cells|1}", "Set proximity radius");
@@ -1692,6 +2272,25 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
                 html += mini("Activate", "!mech manualon " + sourceId, "Set manual trigger active");
                 html += mini("Deactivate", "!mech manualoff " + sourceId, "Set manual trigger inactive");
                 html += mini("Toggle", "!mech manualtoggle " + sourceId, "Toggle manual trigger state");
+            }
+            if (mech.sourceKind === "lever") {
+                html += mini("Switch On", "!mech leveron " + sourceId, "Flip lever on");
+                html += mini("Switch Off", "!mech leveroff " + sourceId, "Flip lever off");
+                html += mini("Toggle", "!mech levertoggle " + sourceId, "Toggle lever state");
+            }
+            if (mech.sourceKind === "button") {
+                html += mini("Press", "!mech buttonpress " + sourceId, "Press the button");
+                html += mini("Release", "!mech buttonrelease " + sourceId, "Release the button");
+                html += mini("Toggle", "!mech buttontoggle " + sourceId, "Toggle button state");
+            }
+            if (mech.sourceKind === "doorState") {
+                html += mini("On Open", "!mech doorstatemode " + sourceId + " open", "Fire when the door is open");
+                html += mini("On Closed", "!mech doorstatemode " + sourceId + " closed", "Fire when the door is closed");
+                html += mini("On Locked", "!mech doorstatemode " + sourceId + " locked", "Fire when the door is locked");
+                html += mini("On Unlocked", "!mech doorstatemode " + sourceId + " unlocked", "Fire when the door is unlocked");
+                html += mini("On Revealed", "!mech doorstatemode " + sourceId + " revealed", "Fire when the door is revealed");
+                html += mini("On Hidden", "!mech doorstatemode " + sourceId + " hidden", "Fire when the door is hidden");
+                html += '<div style="margin-top:4px;font-weight:900;">Watch for: <span style="color:#333;">' + esc(doorStateModeLabel(mech.triggerConfig.doorStateMode)) + "</span></div>";
             }
             html += "</div>";
         }
@@ -1703,14 +2302,15 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
             else html += mini("Add selected sources", "!mech groupaddplates " + mech.legacyId, "Add selected sources");
         }
         for (var i = 0; i < mech.sources.length; i++) {
-            var src = getObj("graphic", mech.sources[i]);
+            var srcMech = getSingleMechanism(mech.sources[i]);
+            var src = getSourceObject(srcMech.legacyId, srcMech.sourceKind);
             if (!src) continue;
-            html += '<div style="margin-top:6px;font-weight:900;">' + esc(src.get("name") || ("Trigger …" + shortId(src.id))) + ' ';
-            html += '<span style="color:#666;">(' + esc(sourceKindLabel(getSingleMechanism(src.id).sourceKind)) + ')</span> ';
-            html += mini("Ping", "!mech ping " + src.id, "Ping source");
+            html += '<div style="margin-top:6px;font-weight:900;">' + esc(sourceDisplayName(srcMech.legacyId, srcMech.sourceKind, src)) + ' ';
+            html += '<span style="color:#666;">(' + esc(sourceKindLabel(srcMech.sourceKind)) + ')</span> ';
+            html += mini("Ping", "!mech ping " + srcMech.legacyId, "Ping source");
             if (!isSingle) {
                 if (editBlocked) html += miniDisabled("Remove", "Config locked");
-                else html += mini("Remove", "!mech groupdelplate " + mech.legacyId + " " + src.id, "Remove source");
+                else html += mini("Remove", "!mech groupdelplate " + mech.legacyId + " " + srcMech.legacyId, "Remove source");
             }
             html += "</div>";
         }
@@ -1746,10 +2346,12 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
             html += '<div style="font-weight:900;font-size:16px;margin-bottom:6px;">Primary Effect</div>';
             html += mini("Alarm", "!mech effecttype " + sourceId + " alarm", "Narration or warning effect");
             html += mini("Damage", "!mech effecttype " + sourceId + " damage", "Damage effect");
+            html += mini("Projectile", "!mech effecttype " + sourceId + " projectile", "Projectile-style damage effect");
             html += mini("Save", "!mech effecttype " + sourceId + " save", "Save/check prompt effect");
             html += mini("Status", "!mech effecttype " + sourceId + " status", "Apply status markers");
             html += mini("Spawn", "!mech effecttype " + sourceId + " spawn", "Reveal selected spawn tokens");
             html += mini("Teleport", "!mech effecttype " + sourceId + " teleport", "Teleport occupants");
+            html += mini("Pit / Move", "!mech effecttype " + sourceId + " pit", "Force-move or pit effect");
             html += mini("Reveal", "!mech effecttype " + sourceId + " reveal", "Reveal hidden targets");
             html += mini("Disable", "!mech effecttype " + sourceId + " none", "Disable primary effect without removing mechanism");
             html += '<div style="margin-top:8px;font-weight:900;">Current type: <span style="color:#333;">' + esc(primaryEffectTypeLabel(trap.type)) + "</span></div>";
@@ -1761,6 +2363,17 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
                 html += '<div style="font-weight:900;font-size:16px;margin-bottom:6px;">Damage</div>';
                 html += mini("Set damage", "!mech effectdamage " + sourceId + " ?{Damage roll|1d6}", "Set damage roll");
                 html += '<div style="margin-top:8px;font-weight:900;">Damage: <span style="color:#333;">' + esc(trap.damage) + "</span></div>";
+                html += "</div>";
+            }
+
+            if (trap.type === "projectile") {
+                html += '<div style="border:2px solid #111;border-radius:10px;padding:10px;margin-bottom:10px;">';
+                html += '<div style="font-weight:900;font-size:16px;margin-bottom:6px;">Projectile</div>';
+                html += mini("Set label", "!mech effectprojectilename " + sourceId + " ?{Projectile label|Dart volley}", "Set projectile label");
+                html += mini("Set damage", "!mech effectdamage " + sourceId + " ?{Damage roll|1d6}", "Set damage roll");
+                html += mini("Set dmg type", "!mech effectprojectiledmgtype " + sourceId + " ?{Damage type|piercing|slashing|bludgeoning|acid|cold|fire|force|lightning|necrotic|poison|psychic|radiant|thunder}", "Set projectile damage type");
+                html += '<div style="margin-top:8px;font-weight:900;">Label: <span style="color:#333;">' + esc(String(trap.projectile.label || "").trim() || "(none)") + "</span></div>";
+                html += '<div style="margin-top:4px;font-weight:900;">Damage: <span style="color:#333;">' + esc(trap.damage) + damageTypeSuffix(trap.projectile.damageType) + "</span></div>";
                 html += "</div>";
             }
 
@@ -1797,6 +2410,18 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
                 html += mini("Set destination", "!mech effectsetteleport " + sourceId, "Set destination from selection");
                 html += mini("Clear destination", "!mech effectclearteleport " + sourceId, "Clear destination");
                 html += '<div style="margin-top:8px;font-weight:900;">Destination: <span style="color:#333;">' + esc(describeTeleportDestination(trap)) + "</span></div>";
+                html += "</div>";
+            }
+
+            if (trap.type === "pit") {
+                html += '<div style="border:2px solid #111;border-radius:10px;padding:10px;margin-bottom:10px;">';
+                html += '<div style="font-weight:900;font-size:16px;margin-bottom:6px;">Pit / Force Move</div>';
+                html += mini("Set destination", "!mech effectsetpit " + sourceId, "Set pit or force-move destination from selection");
+                html += mini("Clear destination", "!mech effectclearpit " + sourceId, "Clear pit destination");
+                html += mini("Set damage", "!mech effectpitdamage " + sourceId + " ?{Pit damage|}", "Set optional pit damage");
+                html += mini("Set dmg type", "!mech effectpitdmgtype " + sourceId + " ?{Damage type|bludgeoning|piercing|slashing|acid|cold|fire|force|lightning|necrotic|poison|psychic|radiant|thunder}", "Set pit damage type");
+                html += '<div style="margin-top:8px;font-weight:900;">Destination: <span style="color:#333;">' + esc(describePitDestination(trap)) + "</span></div>";
+                html += '<div style="margin-top:4px;font-weight:900;">Damage: <span style="color:#333;">' + esc(String(trap.pit.damage || "").trim() || "(none)") + damageTypeSuffix(trap.pit.damageType) + "</span></div>";
                 html += "</div>";
             }
 
@@ -1857,12 +2482,21 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
 
                 getSingleMechanism(o.id);
                 if (mechanismAddSource(mech, o.id)) added++;
+                continue;
+            }
+            if (o.get("_type") === "door") {
+                getSingleMechanism(o.id);
+                updateSingleMechanism(o.id, function (singleMech) {
+                    singleMech.sourceKind = "doorState";
+                    singleMech.triggerConfig = backfillTriggerConfig("doorState", singleMech.triggerConfig);
+                });
+                if (mechanismAddSource(mech, o.id)) added++;
             }
         }
 
         if (mech.rule.mode === "all") mech.rule.k = mech.sources.length;
         commitMechanism(mech);
-        whisper("Group <b>" + esc(name) + "</b> updated. Added <b>" + esc(String(added)) + "</b> plate(s).");
+        whisper("Group <b>" + esc(name) + "</b> updated. Added <b>" + esc(String(added)) + "</b> source(s).");
     }
 
     function cmdAddSourcesToMultiMechanism(msg, name) {
@@ -1882,12 +2516,21 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
 
                 getSingleMechanism(o.id);
                 if (mechanismAddSource(mech, o.id)) added++;
+                continue;
+            }
+            if (o.get("_type") === "door") {
+                getSingleMechanism(o.id);
+                updateSingleMechanism(o.id, function (singleMech) {
+                    singleMech.sourceKind = "doorState";
+                    singleMech.triggerConfig = backfillTriggerConfig("doorState", singleMech.triggerConfig);
+                });
+                if (mechanismAddSource(mech, o.id)) added++;
             }
         }
 
         if (mech.rule.mode === "all") mech.rule.k = mech.sources.length;
         commitMechanism(mech);
-        whisper("Added <b>" + esc(String(added)) + "</b> plate(s) to group <b>" + esc(name) + "</b>.");
+        whisper("Added <b>" + esc(String(added)) + "</b> source(s) to group <b>" + esc(name) + "</b>.");
     }
 
     function cmdAddDoorsToMultiMechanism(msg, name, mode) {
@@ -1980,16 +2623,7 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
     }
 
     function cmdResetMechanismTriggerState(name) {
-        if (!requireMechanismConfigEditable(name)) return;
-        var mech = updateGroupMechanism(name, false, function (mech) {
-            mech.locks.hasTriggered = false;
-            if (mech.locks.mechanismLocked && mech.locks.freezeWhenLocked) {
-                mech.locks.mechanismLocked = false;
-                mech.locks.freezeWhenLocked = false;
-            }
-        });
-        if (!mech) return whisper("Group not found: " + esc(name));
-        whisper("Group <b>" + esc(name) + "</b> trigger state reset (hasTriggered = false).");
+        cmdResetMechanismRuntime(name);
     }
 
     function cmdRemoveMultiMechanism(name) {
@@ -2042,8 +2676,9 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         if (mech.pageId && mech.pageId === pageId) return true;
 
         for (var i = 0; i < mech.sources.length; i++) {
-            var source = getObj("graphic", mech.sources[i]);
-            if (source && source.get("_pageid") === pageId) return true;
+            var sourceMech = getSingleMechanism(mech.sources[i]);
+            var source = getSourceObject(sourceMech.legacyId, sourceMech.sourceKind);
+            if (source && sourcePageId(source, sourceMech.sourceKind) === pageId) return true;
         }
         return false;
     }
@@ -2066,13 +2701,17 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
     }
 
     function mechanismRuleSummary(mech) {
+        var base;
+        var extras = mechanismRuleExtras(mech);
         if (!mech) return "";
         if (mech.kind === "single") {
-            return sourceKindLabel(mech.sourceKind) + " / " + primaryEffectTriggerLabel(mech.rule.timing);
+            base = sourceKindLabel(mech.sourceKind) + " / " + primaryEffectTriggerLabel(mech.rule.timing);
+        } else {
+            var required = mechanismRequiredCount(mech);
+            base = required + " of " + mech.sources.length + " / " + primaryEffectTriggerLabel(mech.rule.timing);
         }
-
-        var required = mechanismRequiredCount(mech);
-        return required + " of " + mech.sources.length + " / " + primaryEffectTriggerLabel(mech.rule.timing);
+        if (extras.length) base += " / " + extras.join(" / ");
+        return base;
     }
 
     function mechanismEffectSummary(mech) {
@@ -2132,6 +2771,9 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         html += iconBtn("🪤", "!mech make ?{Trigger name|Tripwire} tripwire", "Create tripwire from selected trigger");
         html += iconBtn("📡", "!mech make ?{Trigger name|Proximity_Zone} proximity", "Create proximity trigger from selected token");
         html += iconBtn("🎛️", "!mech make ?{Trigger name|Manual_Trigger} manual", "Create manual trigger from selected token");
+        html += iconBtn("🎚️", "!mech make ?{Trigger name|Lever} lever", "Create a lever trigger from selected token");
+        html += iconBtn("🔘", "!mech make ?{Trigger name|Button} button", "Create a button trigger from selected token");
+        html += iconBtn("🚪", "!mech make ?{Trigger name|Door_Trigger} doorState", "Create a door-state trigger from selected Door Tool doors");
         html += iconBtn("🧭", "!mech setpage", "Use Current Page (Set)");
         html += iconBtn("🔄", "!mech ui", "Refresh UI");
         html += iconBtn("✅", "!mech check", "Force check all mechanisms");
@@ -2213,19 +2855,20 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
             html += '<div style="margin-top:10px;font-weight:900;">Sources</div>';
             var anySourceListed = false;
             for (var s = 0; s < mech.sources.length; s++) {
-                var src = getObj("graphic", mech.sources[s]);
-                if (!src || src.get("_pageid") !== pageId) continue;
+                var srcId = mech.sources[s];
+                var srcMech = getSingleMechanism(srcId);
+                var src = getSourceObject(srcId, srcMech.sourceKind);
+                if (!src || sourcePageId(src, srcMech.sourceKind) !== pageId) continue;
                 anySourceListed = true;
-                var srcState = sourceMechanismStateById(src.id);
-                var srcMech = getSingleMechanism(src.id);
-                var srcName = src.get("name") || ("Trigger …" + shortId(src.id));
+                var srcState = sourceMechanismStateById(srcId);
+                var srcName = sourceDisplayName(srcId, srcMech.sourceKind, src);
                 html += '<div style="margin-left:12px;margin-top:6px;font-weight:900;">' +
                     esc(srcName) + ' <span style="color:#666;">(' + esc(sourceKindLabel(srcMech.sourceKind)) + ')</span>' +
                     badge(srcState.active ? "ACTIVE" : "INACTIVE", srcState.active) +
-                    mini("Ping", "!mech ping " + src.id, "Ping this trigger");
+                    mini("Ping", "!mech ping " + srcId, "Ping this trigger");
                 if (mech.kind === "group") {
                     if (editBlocked) html += miniDisabled("Remove", "Config locked");
-                    else html += mini("Remove", "!mech groupdelplate " + mech.legacyId + " " + src.id, "Remove this trigger from the mechanism");
+                    else html += mini("Remove", "!mech groupdelplate " + mech.legacyId + " " + srcId, "Remove this trigger from the mechanism");
                 }
                 html += "</div>";
             }
@@ -2268,13 +2911,16 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
     function showCommandHelp() {
         whisper(
             "Commands:<br>" +
-            "<code>!mech ui</code>, <code>!mech edit REF</code>, <code>!mech setpage</code>, <code>!mech make NAME [pressurePlate|tripwire|proximity|manual]</code>, <code>!mech add lock|secret</code>, <code>!mech check</code>, <code>!mech ping SOURCEID</code><br>" +
-            "Single-Source Triggers:<br><code>!mech sourcetype SOURCEID pressurePlate|tripwire|proximity|manual</code>, <code>!mech proximityrange SOURCEID CELLS</code>, <code>!mech manualon SOURCEID</code>, <code>!mech manualoff SOURCEID</code>, <code>!mech manualtoggle SOURCEID</code><br>" +
-            "Single-Source Effects:<br><code>!mech effectui SOURCEID</code> (alias for edit), <code>!mech effecttoggle SOURCEID</code>, <code>!mech effecttype SOURCEID alarm|damage|teleport|reveal|save|status|spawn|none</code><br>" +
-            "<code>!mech effecttrigger SOURCEID press|release|both</code>, <code>!mech effectmsg SOURCEID ...</code>, <code>!mech effectdamage SOURCEID XdY</code><br>" +
+            "<code>!mech ui</code>, <code>!mech edit REF</code>, <code>!mech setpage</code>, <code>!mech make NAME [pressurePlate|tripwire|proximity|manual|lever|button|doorState]</code>, <code>!mech add lock|secret</code>, <code>!mech check</code>, <code>!mech ping SOURCEID</code><br>" +
+            "Single-Source Triggers:<br><code>!mech sourcetype SOURCEID pressurePlate|tripwire|proximity|manual|lever|button|doorState</code>, <code>!mech proximityrange SOURCEID CELLS</code>, <code>!mech doorstatemode SOURCEID open|closed|locked|unlocked|revealed|hidden</code><br>" +
+            "<code>!mech manualon SOURCEID</code>, <code>!mech manualoff SOURCEID</code>, <code>!mech manualtoggle SOURCEID</code>, <code>!mech leveron SOURCEID</code>, <code>!mech leveroff SOURCEID</code>, <code>!mech levertoggle SOURCEID</code>, <code>!mech buttonpress SOURCEID</code>, <code>!mech buttonrelease SOURCEID</code>, <code>!mech buttontoggle SOURCEID</code><br>" +
+            "Rule Controls:<br><code>!mech ruledelay REF SECONDS</code>, <code>!mech rulecooldown REF SECONDS</code>, <code>!mech ruleoneshot REF on|off</code>, <code>!mech reset REF</code><br>" +
+            "Single-Source Effects:<br><code>!mech effectui SOURCEID</code> (alias for edit), <code>!mech effecttoggle SOURCEID</code>, <code>!mech effecttype SOURCEID alarm|damage|projectile|teleport|pit|reveal|save|status|spawn|none</code><br>" +
+            "<code>!mech effecttrigger SOURCEID press|release|both</code>, <code>!mech effectmsg SOURCEID ...</code>, <code>!mech effectdamage SOURCEID XdY</code>, <code>!mech effectprojectilename SOURCEID ...</code>, <code>!mech effectprojectiledmgtype SOURCEID TYPE</code><br>" +
             "<code>!mech effectsavelabel SOURCEID LABEL</code>, <code>!mech effectsavedc SOURCEID DC</code>, <code>!mech effectsavesuccessmsg SOURCEID ...</code>, <code>!mech effectsavefailmsg SOURCEID ...</code><br>" +
             "<code>!mech effectsavesuccess SOURCEID half|none</code>, <code>!mech effectsavedmgtype SOURCEID TYPE</code>, <code>!mech effectsavefaildmg SOURCEID XdY</code>, <code>!mech effectstatusmarkers SOURCEID marker1,marker2</code>, <code>!mech effectstatusclear SOURCEID</code><br>" +
-            "<code>!mech effectsetteleport SOURCEID</code>, <code>!mech effectclearteleport SOURCEID</code>, <code>!mech effectsetreveal SOURCEID</code>, <code>!mech effectclearreveal SOURCEID</code>, <code>!mech effectrevealtoggle SOURCEID</code><br>" +
+            "<code>!mech effectsetteleport SOURCEID</code>, <code>!mech effectclearteleport SOURCEID</code>, <code>!mech effectsetpit SOURCEID</code>, <code>!mech effectclearpit SOURCEID</code>, <code>!mech effectpitdamage SOURCEID XdY</code>, <code>!mech effectpitdmgtype SOURCEID TYPE</code><br>" +
+            "<code>!mech effectsetreveal SOURCEID</code>, <code>!mech effectclearreveal SOURCEID</code>, <code>!mech effectrevealtoggle SOURCEID</code><br>" +
             "<code>!mech effectsetspawn SOURCEID</code>, <code>!mech effectclearspawn SOURCEID</code>, <code>!mech effectlocktoggle SOURCEID</code>, <code>!mech effectlockmarker SOURCEID MARKER</code>, <code>!mech effectunlock SOURCEID</code><br>" +
             "Messages:<br><code>!mech platemsgon SOURCEID ...</code>, <code>!mech platemsgoff SOURCEID ...</code><br>" +
             "Multi-Source Mechanisms:<br>" +
@@ -2362,6 +3008,12 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
             renderUI(msg.playerid);
             return true;
         }
+        if (sub === "doorstatemode") {
+            if (a) cmdSetDoorStateMode(a, b);
+            evaluateAll();
+            renderUI(msg.playerid);
+            return true;
+        }
         if (sub === "proximityrange") {
             if (a) cmdSetProximityRange(a, b);
             evaluateAll();
@@ -2380,6 +3032,64 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         }
         if (sub === "manualtoggle") {
             if (a) cmdToggleManualState(a);
+            renderUI(msg.playerid);
+            return true;
+        }
+        if (sub === "leveron") {
+            if (a) cmdSetLeverState(a, true);
+            renderUI(msg.playerid);
+            return true;
+        }
+        if (sub === "leveroff") {
+            if (a) cmdSetLeverState(a, false);
+            renderUI(msg.playerid);
+            return true;
+        }
+        if (sub === "levertoggle") {
+            if (a) cmdToggleLeverState(a);
+            renderUI(msg.playerid);
+            return true;
+        }
+        if (sub === "buttonpress") {
+            if (a) cmdSetButtonState(a, true);
+            renderUI(msg.playerid);
+            return true;
+        }
+        if (sub === "buttonrelease") {
+            if (a) cmdSetButtonState(a, false);
+            renderUI(msg.playerid);
+            return true;
+        }
+        if (sub === "buttontoggle") {
+            if (a) cmdToggleButtonState(a);
+            renderUI(msg.playerid);
+            return true;
+        }
+        return false;
+    }
+
+    function handleRuleCommands(msg, sub, a, b) {
+        if (sub === "ruledelay") {
+            if (a) cmdSetMechanismDelay(a, b);
+            evaluateAll();
+            renderUI(msg.playerid);
+            return true;
+        }
+        if (sub === "rulecooldown") {
+            if (a) cmdSetMechanismCooldown(a, b);
+            evaluateAll();
+            renderUI(msg.playerid);
+            return true;
+        }
+        if (sub === "ruleoneshot") {
+            if (a) cmdSetMechanismOneShot(a, b);
+            evaluateAll();
+            renderUI(msg.playerid);
+            return true;
+        }
+        if (sub === "reset") {
+            if (a) cmdResetMechanismRuntime(a);
+            evaluateAll();
             renderUI(msg.playerid);
             return true;
         }
@@ -2413,6 +3123,16 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         }
         if (sub === "effectdamage") {
             if (a) cmdEffectDamage(a, restFrom(3));
+            renderEffectUI(msg.playerid, a);
+            return true;
+        }
+        if (sub === "effectprojectilename") {
+            if (a) cmdEffectProjectileLabel(a, restFrom(3));
+            renderEffectUI(msg.playerid, a);
+            return true;
+        }
+        if (sub === "effectprojectiledmgtype") {
+            if (a) cmdEffectProjectileDamageType(a, restFrom(3));
             renderEffectUI(msg.playerid, a);
             return true;
         }
@@ -2468,6 +3188,26 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         }
         if (sub === "effectclearteleport") {
             if (a) cmdEffectClearTeleport(a);
+            renderEffectUI(msg.playerid, a);
+            return true;
+        }
+        if (sub === "effectsetpit") {
+            if (a) cmdEffectSetPitDestination(msg, a);
+            renderEffectUI(msg.playerid, a);
+            return true;
+        }
+        if (sub === "effectclearpit") {
+            if (a) cmdEffectClearPitDestination(a);
+            renderEffectUI(msg.playerid, a);
+            return true;
+        }
+        if (sub === "effectpitdamage") {
+            if (a) cmdEffectPitDamage(a, restFrom(3));
+            renderEffectUI(msg.playerid, a);
+            return true;
+        }
+        if (sub === "effectpitdmgtype") {
+            if (a) cmdEffectPitDamageType(a, restFrom(3));
             renderEffectUI(msg.playerid, a);
             return true;
         }
@@ -2645,6 +3385,25 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         }
     });
 
+    on("change:door", function (obj, prev) {
+        if (
+            obj.get("isOpen") !== prev.isOpen ||
+            obj.get("isLocked") !== prev.isLocked ||
+            obj.get("isSecret") !== prev.isSecret ||
+            obj.get("x") !== prev.x ||
+            obj.get("y") !== prev.y ||
+            obj.get("left") !== prev.left ||
+            obj.get("top") !== prev.top ||
+            (obj.get("_pageid") || obj.get("pageid")) !== (prev._pageid || prev.pageid)
+        ) {
+            debouncedCheck();
+        }
+    });
+
+    on("destroy:door", function () {
+        debouncedCheck();
+    });
+
     on("chat:message", function (msg) {
         if (msg.type !== "api") return;
         if (!playerIsGM(msg.playerid)) return;
@@ -2663,6 +3422,7 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
 
         if (handleUiCommands(msg, sub)) return;
         if (handleSingleCommands(msg, sub, a, b, restFrom)) return;
+        if (handleRuleCommands(msg, sub, a, b)) return;
         if (handleEffectCommands(msg, sub, a, b, restFrom)) return;
         if (handleGroupCommands(msg, sub, a, b, restFrom)) return;
 

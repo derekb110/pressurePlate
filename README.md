@@ -14,13 +14,15 @@ Secret doors and locked doors
 
 Trigger & release messages
 
-Trigger types: pressure plate, tripwire, proximity, manual
+Trigger types: pressure plate, tripwire, proximity, manual, lever, button, door state
 
-Primary effect types: alarm, damage, teleport, reveal, save, status, spawn
+Primary effect types: alarm, damage, projectile, teleport, pit/force-move, reveal, save, status, spawn
 
 Additional effect: lock triggered token(s) in place
 
 Auto-lock puzzles
+
+One-shot, cooldown, and delay rules
 
 Mechanism lock & config lock systems
 
@@ -98,7 +100,7 @@ Open the UI with:
 Basic Usage
 Create a Trigger
 
-Select one or more tokens and run:
+Select one or more trigger tokens, or select Door Tool doors for a door-state trigger, and run:
 
 !mech make TriggerName
 
@@ -106,7 +108,9 @@ You can also create a specific trigger type:
 
 !mech make TripwireA tripwire
 !mech make DangerZone proximity
-!mech make LeverA manual
+!mech make LeverA lever
+!mech make ButtonA button
+!mech make FrontDoor doorState
 
 
 Trigger tokens are automatically moved to the GM layer.
@@ -154,21 +158,62 @@ Optionally enable the lock-token effect
 
 For non-reveal primary effect types, you can also enable reveal as an extra effect so a save, damage, or spawn effect can reveal hidden targets at the same time.
 
+Rule controls:
+
+You can add a delay before activation, a cooldown after activation, or one-shot behavior so a mechanism only activates once until reset.
+
+Use:
+
+!mech ruledelay REF 1.5
+!mech rulecooldown REF 10
+!mech ruleoneshot REF on
+!mech reset REF
+
 Primary Effect Setup Notes
 
 Trigger type setup:
 
 Pressure plate:
 
-Requires a token to be fully inside the source token bounds.
+When it fires:
+
+The token must be fully inside the trigger token bounds.
+
+Best for:
+
+Classic floor plates, pedestal switches, weighted pressure tiles, and puzzle plates.
+
+Notes:
+
+This is the most precise trigger type. Partial overlap does not count.
 
 Tripwire:
 
-Triggers when any token overlaps the source token bounds.
+When it fires:
+
+Any part of a token overlaps the trigger token bounds.
+
+Best for:
+
+Hallway wires, laser lines, threshold traps, and narrow crossing points.
+
+Notes:
+
+Use a thin or narrow token shape on the GM layer to represent the wire path. This is less strict than a pressure plate and will fire on partial overlap.
 
 Proximity:
 
-Triggers when a token comes within a configurable radius.
+When it fires:
+
+A token comes within a configurable radius of the trigger token.
+
+Best for:
+
+Magic wards, scent/sound triggers, sentry zones, cursed objects, and area-based ambushes.
+
+Notes:
+
+The range is measured in map cells from the trigger token. Larger trigger tokens still use their token center as the anchor, so test the feel in-game if you want a tight detection ring.
 
 Set the radius in cells with:
 
@@ -176,13 +221,90 @@ Set the radius in cells with:
 
 Manual:
 
-A GM-controlled trigger state that does not depend on token movement.
+When it fires:
+
+Only when the GM explicitly turns it on.
+
+Best for:
+
+Hidden switches, remote controls, GM-timed events, story beats, and triggers that should not depend on token movement at all.
+
+Notes:
+
+This is useful when you want the mechanism engine, effects, and door logic, but not automatic detection from a token entering an area.
 
 Use:
 
 !mech manualon SOURCEID
 !mech manualoff SOURCEID
 !mech manualtoggle SOURCEID
+
+Lever:
+
+When it fires:
+
+Only when the GM flips it on.
+
+Best for:
+
+Wall levers, hidden switch handles, mechanical puzzle arms, and reusable toggle controls.
+
+Notes:
+
+This is a persistent controlled trigger. Unlike a button, it stays on until you flip it back off.
+
+Use:
+
+!mech leveron SOURCEID
+!mech leveroff SOURCEID
+!mech levertoggle SOURCEID
+
+Button:
+
+When it fires:
+
+Only when the GM presses it.
+
+Best for:
+
+Push plates, magical glyph buttons, panel switches, and any control you want to press and release separately.
+
+Notes:
+
+This is the same controlled model as manual and lever, but with button-style labels in the UI and commands.
+
+Use:
+
+!mech buttonpress SOURCEID
+!mech buttonrelease SOURCEID
+!mech buttontoggle SOURCEID
+
+Door state:
+
+When it fires:
+
+The selected Roll20 Door Tool door matches a configured state like open, closed, locked, unlocked, revealed, or hidden.
+
+Best for:
+
+Linked encounters, chained room logic, doors that trigger ambushes when opened, and mechanisms that react to how a real Roll20 door object changes over time.
+
+Notes:
+
+This uses the actual Roll20 Door Tool door on the map, not a token pretending to be a door.
+
+Create a door-state trigger by selecting one or more door objects, then use:
+
+!mech make NAME doorState
+
+Set the watched door state with:
+
+!mech doorstatemode SOURCEID open
+!mech doorstatemode SOURCEID closed
+!mech doorstatemode SOURCEID locked
+!mech doorstatemode SOURCEID unlocked
+!mech doorstatemode SOURCEID revealed
+!mech doorstatemode SOURCEID hidden
 
 Teleport effects:
 
@@ -234,20 +356,33 @@ Command Reference
 !mech setpage
 !mech check
 
-!mech make NAME [pressurePlate|tripwire|proximity|manual]
+!mech make NAME [pressurePlate|tripwire|proximity|manual|lever|button|doorState]
 !mech add lock
 !mech add secret
-!mech sourcetype SOURCEID pressurePlate|tripwire|proximity|manual
+!mech sourcetype SOURCEID pressurePlate|tripwire|proximity|manual|lever|button|doorState
+!mech doorstatemode SOURCEID open|closed|locked|unlocked|revealed|hidden
 !mech proximityrange SOURCEID CELLS
 !mech manualon SOURCEID
 !mech manualoff SOURCEID
 !mech manualtoggle SOURCEID
+!mech leveron SOURCEID
+!mech leveroff SOURCEID
+!mech levertoggle SOURCEID
+!mech buttonpress SOURCEID
+!mech buttonrelease SOURCEID
+!mech buttontoggle SOURCEID
+!mech ruledelay REF SECONDS
+!mech rulecooldown REF SECONDS
+!mech ruleoneshot REF on|off
+!mech reset REF
 !mech effectui SOURCEID
 !mech effecttoggle SOURCEID
-!mech effecttype SOURCEID alarm|damage|teleport|reveal|save|status|spawn|none
+!mech effecttype SOURCEID alarm|damage|projectile|teleport|pit|reveal|save|status|spawn|none
 !mech effecttrigger SOURCEID press|release|both
 !mech effectmsg SOURCEID message...
 !mech effectdamage SOURCEID XdY
+!mech effectprojectilename SOURCEID label...
+!mech effectprojectiledmgtype SOURCEID TYPE
 !mech effectsavelabel SOURCEID LABEL
 !mech effectsavedc SOURCEID DC
 !mech effectsavesuccessmsg SOURCEID message...
@@ -259,6 +394,10 @@ Command Reference
 !mech effectstatusclear SOURCEID
 !mech effectsetteleport SOURCEID
 !mech effectclearteleport SOURCEID
+!mech effectsetpit SOURCEID
+!mech effectclearpit SOURCEID
+!mech effectpitdamage SOURCEID XdY
+!mech effectpitdmgtype SOURCEID TYPE
 !mech effectsetreveal SOURCEID
 !mech effectclearreveal SOURCEID
 !mech effectrevealtoggle SOURCEID
@@ -339,9 +478,17 @@ DAMAGE
 
 Posts a damage roll message against the token(s) on the plate.
 
+PROJECTILE
+
+Posts a flavored projectile attack message with a damage roll and damage type.
+
 TELEPORT
 
 Moves the token(s) on the plate to a saved destination marker.
+
+PIT / FORCE MOVE
+
+Moves the token(s) to a configured destination marker and can also apply optional pit or fall damage.
 
 REVEAL
 
@@ -399,6 +546,22 @@ Ambush spawn effect
 
 !mech effecttype SOURCEID spawn
 !mech effectmsg SOURCEID Hidden attackers rush into the room.
+
+Arrow slit projectile
+
+!mech effecttype SOURCEID projectile
+!mech effectprojectilename SOURCEID Arrow volley
+!mech effectdamage SOURCEID 2d6
+!mech effectprojectiledmgtype SOURCEID piercing
+!mech effectmsg SOURCEID Arrows launch from the murder holes.
+
+Pit drop / force move
+
+!mech effecttype SOURCEID pit
+!mech effectsetpit SOURCEID
+!mech effectpitdamage SOURCEID 2d6
+!mech effectpitdmgtype SOURCEID bludgeoning
+!mech effectmsg SOURCEID The floor opens beneath your feet.
 
 Backward Compatibility
 
