@@ -7,6 +7,7 @@
      (A) Single Plate -> N Doors
      (B) Group (K-of-N plates) -> N Doors
    - Door modes:
+     open   => open when active; close when inactive
      lock   => open/unlock when active; close/lock when inactive
      secret => reveal/open when active; hide/close/lock when inactive
    - UI (GM-only): Teleport-ish list cards with icon buttons
@@ -41,6 +42,7 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
     var PRIMARY_EFFECT_TYPES = { none: true, alarm: true, damage: true, projectile: true, teleport: true, pit: true, reveal: true, save: true, status: true, spawn: true };
     var PRIMARY_EFFECT_TRIGGERS = { press: true, release: true, both: true };
     var SOURCE_KINDS = { pressurePlate: true, tripwire: true, proximity: true, manual: true, lever: true, button: true, doorState: true };
+    var DOOR_BIND_MODES = { open: true, lock: true, secret: true };
     var MOVE_LOCK_REENTRY = {};
 
     function defaultTriggerConfig(kind) {
@@ -109,11 +111,49 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         };
     }
 
+    function revealRefForGraphicId(id) {
+        return "graphic:" + id;
+    }
+
+    function normalizeRevealTargets(refs) {
+        var out = [];
+        var seen = {};
+        var ref;
+        var parts;
+        var type;
+        var id;
+
+        refs = refs || [];
+        for (var i = 0; i < refs.length; i++) {
+            ref = String(refs[i] || "");
+            if (!ref) continue;
+            if (ref.indexOf(":") === -1) ref = revealRefForGraphicId(ref);
+            parts = ref.split(":");
+            if (parts.length !== 2) continue;
+            type = parts[0];
+            id = parts[1];
+            if (type !== "graphic" && type !== "door") continue;
+            ref = type + ":" + id;
+            if (seen[ref]) continue;
+            seen[ref] = true;
+            out.push(ref);
+        }
+
+        return out;
+    }
+
+    function graphicRevealRefsFromIds(ids) {
+        var refs = [];
+        for (var i = 0; i < ids.length; i++) refs.push(revealRefForGraphicId(ids[i]));
+        return normalizeRevealTargets(refs);
+    }
+
     function backfillPrimaryEffectConfig(effect) {
         effect = effect || {};
 
         if (typeof effect.enabled === "undefined") effect.enabled = false;
         if (!PRIMARY_EFFECT_TYPES[effect.type]) effect.type = "none";
+        if (effect.type === "spawn") effect.type = "reveal";
         if (!PRIMARY_EFFECT_TRIGGERS[effect.trigger]) effect.trigger = "press";
         if (typeof effect.message === "undefined") effect.message = "";
         if (typeof effect.damage === "undefined") effect.damage = "1d6";
@@ -152,6 +192,8 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
 
         if (!effect.revealTargets) effect.revealTargets = [];
         if (!effect.spawnTargets) effect.spawnTargets = [];
+        effect.revealTargets = normalizeRevealTargets(effect.revealTargets.concat(graphicRevealRefsFromIds(effect.spawnTargets)));
+        effect.spawnTargets = [];
 
         effect.effects = effect.effects || {};
         if (typeof effect.effects.lockToken === "undefined") effect.effects.lockToken = false;
@@ -618,6 +660,9 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
     /* ---------- door ops ---------- */
     function applyOccupied(door, mode) {
         if (!door) return;
+        if (mode === "open") {
+            door.set({ isOpen: true });
+        }
         if (mode === "lock") {
             door.set({ isLocked: false, isOpen: true });
         }
@@ -628,12 +673,22 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
 
     function applyUnoccupied(door, mode) {
         if (!door) return;
+        if (mode === "open") {
+            door.set({ isOpen: false });
+        }
         if (mode === "lock") {
             door.set({ isOpen: false, isLocked: true });
         }
         if (mode === "secret") {
             door.set({ isOpen: false, isSecret: true, isLocked: true });
         }
+    }
+
+    function doorBindModeLabel(mode) {
+        if (mode === "open") return "Open / Close";
+        if (mode === "lock") return "Unlock+Open / Close+Lock";
+        if (mode === "secret") return "Reveal+Open / Hide+Close+Lock";
+        return String(mode || "").toUpperCase();
     }
 
     function primaryEffectFiresOnEdge(trigger, wasActive, isActive) {
@@ -652,7 +707,7 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         if (type === "reveal") return "Reveal";
         if (type === "save") return "Save";
         if (type === "status") return "Status";
-        if (type === "spawn") return "Spawn";
+        if (type === "spawn") return "Reveal";
         return "None";
     }
 
@@ -975,13 +1030,7 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
             return;
         }
 
-        if (effect.type === "spawn") {
-            var spawned = runSpawnTargets(effect.spawnTargets || []);
-            if (spawned) postTriggerMessage(customMsg || ("Spawn effect triggered at " + sourceName + "."));
-            if (revealCount && !customMsg) postTriggerMessage("Hidden elements are revealed.");
-            maybeApplyLockEffect(source.id, effect, targets);
-            return;
-        }
+        if (revealCount && !customMsg && effect.type !== "reveal") postTriggerMessage("Hidden elements are revealed.");
     }
 
     /* ---------- evaluation: single plate ---------- */
@@ -1460,7 +1509,7 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
 
     function describeRevealTargets(trap) {
         var out = [];
-        var refs = (trap && trap.revealTargets) ? trap.revealTargets : [];
+        var refs = normalizeRevealTargets(trap && trap.revealTargets);
 
         for (var i = 0; i < refs.length; i++) {
             var ref = String(refs[i] || "");
@@ -1484,10 +1533,14 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
 
     function describeSpawnTargets(trap) {
         var out = [];
-        var refs = (trap && trap.spawnTargets) ? trap.spawnTargets : [];
+        var refs = normalizeRevealTargets(trap && trap.revealTargets);
+        var parts;
+        var g;
 
         for (var i = 0; i < refs.length; i++) {
-            var g = getObj("graphic", refs[i]);
+            parts = refs[i].split(":");
+            if (parts[0] !== "graphic") continue;
+            g = getObj("graphic", parts[1]);
             if (!g) continue;
             out.push((g.get("name") || "Spawn") + " …" + shortId(g.id));
         }
@@ -1720,8 +1773,8 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
 
     function cmdAddSingle(msg, mode) {
         mode = (mode || "").toLowerCase();
-        if (mode !== "lock" && mode !== "secret") {
-            whisper("Use <code>!mech add lock</code> or <code>!mech add secret</code>.");
+        if (!DOOR_BIND_MODES[mode]) {
+            whisper("Use <code>!mech add open</code>, <code>!mech add lock</code>, or <code>!mech add secret</code>.");
             return;
         }
 
@@ -1820,6 +1873,7 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
 
     function cmdEffectType(plateId, type) {
         type = String(type || "").toLowerCase();
+        var normalizedType = type === "spawn" ? "reveal" : type;
 
         if (!PRIMARY_EFFECT_TYPES[type]) {
             whisper("Primary effect must be one of: <code>alarm</code>, <code>damage</code>, <code>projectile</code>, <code>teleport</code>, <code>pit</code>, <code>reveal</code>, <code>save</code>, <code>status</code>, <code>spawn</code>, <code>none</code>.");
@@ -1828,10 +1882,10 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
 
         updateSingleMechanism(plateId, function (mech) {
             var primary = getPrimaryEffect(mech);
-            primary.type = type;
-            primary.enabled = (type !== "none");
+            primary.type = normalizedType;
+            primary.enabled = (normalizedType !== "none");
         });
-        whisper("Trigger …" + esc(shortId(plateId)) + " primary effect set to <b>" + esc(primaryEffectTypeLabel(type).toUpperCase()) + "</b>.");
+        whisper("Trigger …" + esc(shortId(plateId)) + " primary effect set to <b>" + esc(primaryEffectTypeLabel(normalizedType).toUpperCase()) + "</b>.");
     }
 
     function cmdEffectTrigger(plateId, trigger) {
@@ -2005,7 +2059,7 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         }
 
         updateSingleMechanism(plateId, function (mech) {
-            getPrimaryEffect(mech).revealTargets = refs;
+            getPrimaryEffect(mech).revealTargets = normalizeRevealTargets(refs);
         });
         whisper("Reveal targets saved for trigger …" + esc(shortId(plateId)) + ".");
     }
@@ -2034,16 +2088,32 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         }
 
         updateSingleMechanism(plateId, function (mech) {
-            getPrimaryEffect(mech).spawnTargets = ids;
+            var primary = getPrimaryEffect(mech);
+            var keep = [];
+            var refs = normalizeRevealTargets(primary.revealTargets);
+            for (var r = 0; r < refs.length; r++) {
+                if (refs[r].indexOf("door:") === 0) keep.push(refs[r]);
+            }
+            primary.revealTargets = normalizeRevealTargets(keep.concat(graphicRevealRefsFromIds(ids)));
+            if (primary.type === "none") {
+                primary.type = "reveal";
+                primary.enabled = true;
+            }
         });
-        whisper("Spawn targets saved for trigger …" + esc(shortId(plateId)) + ".");
+        whisper("Spawn-style reveal targets saved for trigger …" + esc(shortId(plateId)) + ".");
     }
 
     function cmdEffectClearSpawn(plateId) {
         updateSingleMechanism(plateId, function (mech) {
-            getPrimaryEffect(mech).spawnTargets = [];
+            var primary = getPrimaryEffect(mech);
+            var kept = [];
+            var refs = normalizeRevealTargets(primary.revealTargets);
+            for (var i = 0; i < refs.length; i++) {
+                if (refs[i].indexOf("door:") === 0) kept.push(refs[i]);
+            }
+            primary.revealTargets = kept;
         });
-        whisper("Spawn targets cleared for trigger …" + esc(shortId(plateId)) + ".");
+        whisper("Spawn-style reveal targets cleared for trigger …" + esc(shortId(plateId)) + ".");
     }
 
     function cmdEffectSetPitDestination(msg, plateId) {
@@ -2392,19 +2462,22 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         var body = "";
 
         if (view.isSingle) {
+            body += mini("Bind OPEN doors", "!mech add open", "Active: open, inactive: close");
             body += mini("Bind LOCK doors", "!mech add lock", "Select this source and doors, then click");
             body += mini("Bind SECRET doors", "!mech add secret", "Select this source and doors, then click");
         } else if (view.editBlocked) {
+            body += miniDisabled("Add OPEN", "Config locked");
             body += miniDisabled("Add LOCK", "Config locked");
             body += miniDisabled("Add SECRET", "Config locked");
         } else {
+            body += mini("Add OPEN", "!mech groupadddoors " + mech.legacyId + " open", "Bind selected doors as open/close");
             body += mini("Add LOCK", "!mech groupadddoors " + mech.legacyId + " lock", "Bind selected doors as lock");
             body += mini("Add SECRET", "!mech groupadddoors " + mech.legacyId + " secret", "Bind selected doors as secret");
         }
 
         for (var doorId in mech.effects.doors) {
             if (!mech.effects.doors.hasOwnProperty(doorId)) continue;
-            body += '<div style="margin-top:6px;font-weight:900;">' + esc(String(mech.effects.doors[doorId]).toUpperCase()) + " door …" + esc(shortId(doorId)) + " ";
+            body += '<div style="margin-top:6px;font-weight:900;">' + esc(doorBindModeLabel(mech.effects.doors[doorId])) + " door …" + esc(shortId(doorId)) + " ";
             if (!view.isSingle) {
                 if (view.editBlocked) body += miniDisabled("Detach", "Config locked");
                 else body += mini("Detach", "!mech groupdeldor " + mech.legacyId + " " + doorId, "Detach door");
@@ -2426,7 +2499,7 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         body += mini("Projectile", "!mech effecttype " + view.sourceId + " projectile", "Projectile-style damage effect");
         body += mini("Save", "!mech effecttype " + view.sourceId + " save", "Save/check prompt effect");
         body += mini("Status", "!mech effecttype " + view.sourceId + " status", "Apply status markers");
-        body += mini("Spawn", "!mech effecttype " + view.sourceId + " spawn", "Reveal selected spawn tokens");
+        body += mini("Spawn", "!mech effecttype " + view.sourceId + " spawn", "Alias for reveal staged GM-layer tokens");
         body += mini("Teleport", "!mech effecttype " + view.sourceId + " teleport", "Teleport occupants");
         body += mini("Pit / Move", "!mech effecttype " + view.sourceId + " pit", "Force-move or pit effect");
         body += mini("Reveal", "!mech effecttype " + view.sourceId + " reveal", "Reveal hidden targets");
@@ -2499,15 +2572,11 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         if (primaryEffect.type === "reveal") {
             body += mini("Set reveal targets", "!mech effectsetreveal " + view.sourceId, "Set reveal targets from selection");
             body += mini("Clear reveal targets", "!mech effectclearreveal " + view.sourceId, "Clear reveal targets");
+            body += mini("Set staged tokens", "!mech effectsetspawn " + view.sourceId, "Alias: set GM-layer token reveal targets");
+            body += mini("Clear staged tokens", "!mech effectclearspawn " + view.sourceId, "Alias: clear graphic reveal targets");
             body += detailStat("Reveal targets", describeRevealTargets(primaryEffect));
+            body += detailStat("Staged tokens", describeSpawnTargets(primaryEffect));
             return sectionCard("Reveal Targets", body, false);
-        }
-
-        if (primaryEffect.type === "spawn") {
-            body += mini("Set spawn targets", "!mech effectsetspawn " + view.sourceId, "Set spawn targets from selection");
-            body += mini("Clear spawn targets", "!mech effectclearspawn " + view.sourceId, "Clear spawn targets");
-            body += detailStat("Spawn targets", describeSpawnTargets(primaryEffect));
-            return sectionCard("Spawn Targets", body, false);
         }
 
         return "";
@@ -2636,12 +2705,12 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
     }
 
     function cmdAddDoorsToMultiMechanism(msg, name, mode) {
-        if (!name) { whisper("Usage: <code>!mech groupadddoors NAME lock|secret</code>"); return; }
+        if (!name) { whisper("Usage: <code>!mech groupadddoors NAME open|lock|secret</code>"); return; }
         if (!requireMechanismConfigEditable(name)) return;
 
         mode = (mode || "").toLowerCase();
-        if (mode !== "lock" && mode !== "secret") {
-            whisper("Usage: select Door object(s), then <code>!mech groupadddoors " + esc(name) + " lock</code> or <code>... secret</code>.");
+        if (!DOOR_BIND_MODES[mode]) {
+            whisper("Usage: select Door object(s), then <code>!mech groupadddoors " + esc(name) + " open</code>, <code>... lock</code>, or <code>... secret</code>.");
             return;
         }
 
@@ -2659,7 +2728,7 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
         }
 
         commitMechanism(mech);
-        whisper("Added <b>" + esc(String(added)) + "</b> door(s) to group <b>" + esc(name) + "</b> as <b>" + esc(mode.toUpperCase()) + "</b>.");
+        whisper("Added <b>" + esc(String(added)) + "</b> door(s) to group <b>" + esc(name) + "</b> as <b>" + esc(doorBindModeLabel(mode)) + "</b>.");
     }
 
     function cmdSetMultiMechanismRequireAll(name) {
@@ -2881,6 +2950,7 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
             '<div style="margin-top:8px;">' +
             mini("Create Group", "!mech groupmake ?{Mechanism Name (no spaces)|" + esc(suggested) + "} ?{Required K (0=ALL)|0}", "Create or update a multi-source mechanism") +
             mini("Add Sources", "!mech groupaddplates ?{Mechanism Name (no spaces)|" + esc(suggested) + "}", "Add selected triggers to a mechanism") +
+            mini("Add OPEN Doors", "!mech groupadddoors ?{Mechanism Name (no spaces)|" + esc(suggested) + "} open", "Bind selected doors as OPEN/CLOSE effects") +
             mini("Add LOCK Doors", "!mech groupadddoors ?{Mechanism Name (no spaces)|" + esc(suggested) + "} lock", "Bind selected doors as LOCK effects") +
             mini("Add SECRET Doors", "!mech groupadddoors ?{Mechanism Name (no spaces)|" + esc(suggested) + "} secret", "Bind selected doors as SECRET effects") +
             '</div>',
@@ -2948,7 +3018,7 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
     function showCommandHelp() {
         whisper(
             "Commands:<br>" +
-            "<code>!mech ui</code>, <code>!mech edit REF</code>, <code>!mech setpage</code>, <code>!mech make NAME [pressurePlate|tripwire|proximity|manual|lever|button|doorState]</code>, <code>!mech add lock|secret</code>, <code>!mech check</code>, <code>!mech ping SOURCEID</code><br>" +
+            "<code>!mech ui</code>, <code>!mech edit REF</code>, <code>!mech setpage</code>, <code>!mech make NAME [pressurePlate|tripwire|proximity|manual|lever|button|doorState]</code>, <code>!mech add open|lock|secret</code>, <code>!mech check</code>, <code>!mech ping SOURCEID</code><br>" +
             "Single-Source Triggers:<br><code>!mech sourcetype SOURCEID pressurePlate|tripwire|proximity|manual|lever|button|doorState</code>, <code>!mech proximityrange SOURCEID CELLS</code>, <code>!mech doorstatemode SOURCEID open|closed|locked|unlocked|revealed|hidden</code><br>" +
             "<code>!mech manualon SOURCEID</code>, <code>!mech manualoff SOURCEID</code>, <code>!mech manualtoggle SOURCEID</code>, <code>!mech leveron SOURCEID</code>, <code>!mech leveroff SOURCEID</code>, <code>!mech levertoggle SOURCEID</code>, <code>!mech buttonpress SOURCEID</code>, <code>!mech buttonrelease SOURCEID</code>, <code>!mech buttontoggle SOURCEID</code><br>" +
             "Rule Controls:<br><code>!mech ruledelay REF SECONDS</code>, <code>!mech rulecooldown REF SECONDS</code>, <code>!mech ruleoneshot REF on|off</code>, <code>!mech reset REF</code><br>" +
@@ -2963,7 +3033,7 @@ var TriggerMechanisms = TriggerMechanisms || (function () {
             "Multi-Source Mechanisms:<br>" +
             "<code>!mech grouplock NAME</code> (mechanism lock), <code>!mech groupcfglock NAME</code> (config lock), <code>!mech groupoverride NAME</code> (60s override)<br>" +
             "<code>!mech groupautolock NAME</code>, <code>!mech groupreset NAME</code><br>" +
-            "<code>!mech groupmake NAME [K]</code>, <code>!mech groupaddplates NAME</code>, <code>!mech groupadddoors NAME lock|secret</code><br>" +
+            "<code>!mech groupmake NAME [K]</code>, <code>!mech groupaddplates NAME</code>, <code>!mech groupadddoors NAME open|lock|secret</code><br>" +
             "<code>!mech groupmsgon NAME ...</code>, <code>!mech groupmsgoff NAME ...</code><br>" +
             "<code>!mech groupdelplate NAME SOURCEID</code>, <code>!mech groupdeldor NAME DOORID</code>, <code>!mech groupremove NAME</code>"
         );
